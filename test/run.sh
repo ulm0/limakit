@@ -131,7 +131,7 @@ check "provision boot/dependency/data" g '[ "$(cat /run/prov-boot /run/prov-depe
 check "timezone = host" g "[ \"\$(cat /etc/timezone)\" = \"$(readlink /etc/localtime | sed 's|.*zoneinfo/||')\" ]"
 check "dns:" g 'grep -qx "nameserver 1.1.1.1" /etc/resolv.conf'
 check "caCerts (guest bundle)" g "grep -q '$(sed -n 2p "$T/ca.pem")' /etc/ssl/certs/ca-certificates.crt"
-check "dockerd pulls (CA bundle)" g 'docker pull -q busybox'
+check "dockerd pulls (CA bundle)" g 'timeout 300 docker pull -q busybox' # a stalled registry download would hang the run
 check "dockerd set up ip6tables" g '! sudo grep -q "cannot set up ip6tables" /var/log/docker.log'
 check "docker memory/cpu limits" g '[ "$(docker run --rm -m 64m --cpus 0.5 alpine cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max | tr "\n" " ")" = "67108864 50000 100000 " ]'
 check "k3s node Ready in docker (k3d)" g 'docker run -d --privileged --name k3s rancher/k3s:v1.37.1-k3s1 server --disable=traefik >/dev/null && for _ in $(seq 60); do docker exec k3s kubectl get nodes 2>/dev/null | grep -q " Ready " && r=0 && break; r=1; sleep 3; done; docker rm -f k3s >/dev/null; exit $r'
