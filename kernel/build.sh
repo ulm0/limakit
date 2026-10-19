@@ -1,10 +1,11 @@
 #!/bin/sh
-# Build linuxkit/kernel:<version>-limakit (arm64) from LinuxKit's kernel packaging + kernel/limakit.config.
+# Build linuxkit/kernel:<version>-limakit (arm64) from LinuxKit's kernel packaging + kernel/limakit.config
+# (a complete option list over allnoconfig; LinuxKit's own config is not used).
 #
 #   kernel/build.sh [KERNEL_VERSION]        e.g. kernel/build.sh 6.12.59
 #
-# A version whose series LinuxKit doesn't package yet (e.g. 7.2.11) starts from the newest series'
-# config; olddefconfig gives new options their defaults. Review kernel/config-aarch64 after that.
+# A version whose series LinuxKit doesn't package yet (e.g. 7.2.11) borrows the newest series' packaging
+# (Dockerfile, build-args); olddefconfig gives new options their defaults. Review kernel/config-aarch64 after that.
 # Needs docker. DOCKER_HOST should point at a daemon with >=6 CPUs/8GiB; the build takes ~25 min.
 set -eu
 
@@ -33,20 +34,22 @@ fi
 sed -i.bak -e "s/^KERNEL_VERSION=.*/KERNEL_VERSION=$KERNEL_VERSION/" -e "s/^KERNEL_SERIES=.*/KERNEL_SERIES=$SERIES/" "$K/$SERIES/build-args"
 rm -f "$K/$SERIES/build-args.bak"
 
-# 3. apply limakit.config and normalize with olddefconfig (LinuxKit's build rejects a config that isn't),
+# 3. allnoconfig + limakit.config, normalized with olddefconfig (LinuxKit's build rejects a config that isn't),
 #    in LinuxKit's own builder image: the config records the compiler version
 BUILD_IMAGE=$(sed -n 's/^BUILD_IMAGE=//p' "$K/$SERIES/build-args")
-cp "$K/$SERIES/config-aarch64" "$DIR/config-aarch64"
 docker run --rm --platform linux/arm64 -v "$DIR:/k" "$BUILD_IMAGE" sh -euc "
 	apk add -q bash build-base bc bison flex perl linux-headers openssl-dev elfutils-dev curl xz >/dev/null
 	cd /tmp && curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x/linux-$KERNEL_VERSION.tar.xz | tar xJ
-	cd linux-$KERNEL_VERSION && cp /k/config-aarch64 .config
+	cd linux-$KERNEL_VERSION && make ARCH=arm64 allnoconfig >/dev/null
 	grep '^CONFIG_' /k/limakit.config | while IFS== read -r o v; do scripts/config --set-val \"\${o#CONFIG_}\" \"\$v\"; done
 	make ARCH=arm64 olddefconfig >/dev/null
 	# a select/depends chain that isn't met silently drops an option: fail instead
+	# (=n also holds when the symbol is absent: its menu is off)
 	grep '^CONFIG_' /k/limakit.config | while read -r l; do
-		case \"\$l\" in *=n) l=\"# \${l%=n} is not set\" ;; esac
-		grep -qx \"\$l\" .config || { echo \"not applied: \$l\"; exit 1; }
+		case \"\$l\" in
+		*=n) ! grep -q \"^\${l%=n}=\" .config ;;
+		*) grep -qx \"\$l\" .config ;;
+		esac || { echo \"not applied: \$l\"; exit 1; }
 	done
 	cp .config /k/config-aarch64"
 cp "$DIR/config-aarch64" "$K/$SERIES/config-aarch64"

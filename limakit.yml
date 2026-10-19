@@ -1,7 +1,7 @@
 kernel:
   # linuxkit/kernel packaging + kernel/limakit.config: `make kernel`, or pulled from GHCR (CI builds it)
   image: ghcr.io/ulm0/limakit/kernel:6.12.59
-  cmdline: "console=tty0 console=hvc0"
+  cmdline: "console=hvc0"
 init:
   - linuxkit/init:1c3e4933ceabd7418b961d66d5d884bf0044ac64
   - linuxkit/runc:9442aa234715e751a16144f1d4ae3fd1a00fd492
@@ -77,8 +77,10 @@ services:
       - /var/lima-share/cdi:/etc/cdi
       - /var/lib/lima-rosettad:/var/cache/rosettad
       - /var/lima-share/host-services:/run/host-services
-    # wait (up to 30s) for the CA bundle the lima service writes, so early pulls don't fail TLS
-    command: ["/bin/sh", "-c", "i=0; until [ -s /etc/ssl/certs/ca-certificates.crt ] || [ $i -ge 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/local/bin/docker-init -- /usr/local/bin/dockerd --host=unix:///run/dockersock/docker.sock --group=999"]
+    # wait (up to 30s) for the CA bundle the lima service writes, so early pulls don't fail TLS.
+    # --cgroup-parent: this service's own cgroup is /docker (dockerd's default parent); containers inside it
+    # would break cgroup v2's no-internal-processes rule and every --memory/--cpus run fails
+    command: ["/bin/sh", "-c", "i=0; until [ -s /etc/ssl/certs/ca-certificates.crt ] || [ $i -ge 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/local/bin/docker-init -- /usr/local/bin/dockerd --host=unix:///run/dockersock/docker.sock --group=999 --cgroup-parent=/docker-containers"]
   # fstrim /var/lib/docker after image deletes so the disk image can shrink
   - name: trim-after-delete
     image: linuxkit/trim-after-delete:012784ce3bdd59d42799dbf6555fe6da972cc721
@@ -102,10 +104,6 @@ services:
       - path: all
         type: c
         major: 10 # misc: fuse (229), kvm (232), net/tun (200), vsock (dynamic)
-      - path: all
-        type: c
-        major: 4
-        minor: 1 # tty1 (video.display login prompt)
     binds:
       - /dev:/hostdev # only to copy device nodes; host /dev perms are 0660
       - /run/dockersock:/run/dockersock:rw,rbind

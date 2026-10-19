@@ -81,6 +81,7 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
 Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 
 - **Works:**
+  - docker: container memory/CPU limits, IPv6 networks
   - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
   - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
   - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `ansible`, `param`, probes
@@ -95,7 +96,7 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
   - X11 forwarding: the guest sets up `DISPLAY`; drawing needs XQuartz on the Mac.
   - `socket_vmnet` networks: need `socket_vmnet` plus `limactl sudoers` on the host (see Lima's docs).
     Not tested here.
-- **Not tested:** `video.display` (a console window on the Mac; not needed for Docker).
+- **Not supported:** `video.display` (a console window on the Mac): the kernel has no GPU or USB input.
 - **Left out on purpose:** `audio` (the guest gets no sound device access).
 - **Not supported:**
   - Lima's built-in containerd (`containerd.system`/`user`, so `nerdctl.lima` too) and templates that need
@@ -121,12 +122,14 @@ Hosted runners can't boot the image (VZ needs nested virtualization), so `test/r
 
 ## Kernel
 
-`kernel/limakit.config` lists the options limakit sets on top of LinuxKit's kernel config, each with the
-Lima feature that needs it. `kernel/build.sh` does the following:
+`kernel/limakit.config` is the complete list of kernel options, each with the Lima or Docker feature that
+needs it. The kernel starts from `allnoconfig`, not LinuxKit's general-purpose config. `kernel/build.sh`
+does the following:
 
 1. Checks out LinuxKit's kernel packaging at a pinned commit.
-2. Applies the options and normalizes the config with `olddefconfig` in LinuxKit's own builder image.
-3. Fails if any option didn't take.
+2. Runs `allnoconfig`, applies the options and normalizes the config with `olddefconfig` in LinuxKit's own
+   builder image.
+3. Fails if any option didn't take (`=n` options may also be absent, when their menu is off).
 4. Builds the kernel, tagged `ghcr.io/ulm0/limakit/kernel:<version>` (the name `limakit.yml` uses).
 
 The resulting full config is kept in `kernel/config-aarch64` for review.
@@ -137,5 +140,5 @@ To move to another kernel, build it, then set `kernel.image` in `limakit.yml`:
 make kernel KERNEL_VERSION=6.12.60
 ```
 
-For a series LinuxKit doesn't package yet (e.g. 7.x), the script starts from LinuxKit's newest series
-config. New options get their defaults, so review `kernel/config-aarch64` afterwards.
+For a series LinuxKit doesn't package yet (e.g. 7.x), the script borrows LinuxKit's newest series
+packaging. New options get their defaults, so review `kernel/config-aarch64` afterwards.

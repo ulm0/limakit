@@ -23,7 +23,7 @@ lima-image: $(wildcard lima-init/* lima-init/shims/*)
 out/limakit-squashfs.img: limakit.yml lima-image | $(LK)
 	mkdir -p out && $(LK) build --docker --decompress-kernel --format kernel+squashfs --arch arm64 --dir out --name limakit limakit.yml
 
-# Custom kernel (kernel/limakit.config on top of LinuxKit's); ~25 min, wants >=6 CPUs/8GiB.
+# Custom kernel (allnoconfig + kernel/limakit.config); ~25 min, wants >=6 CPUs/8GiB.
 # KERNEL_CONTEXT: docker context to build on; the image is then copied to the current context.
 KERNEL_CONTEXT ?= $(shell docker context show)
 .PHONY: kernel

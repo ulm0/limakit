@@ -11,7 +11,7 @@ images:
     arch: aarch64
     kernel:
       location: https://github.com/ulm0/limakit/releases/latest/download/limakit-kernel
-      cmdline: "console=tty0 console=hvc0 root=/dev/vda" # limakit.yml's cmdline + the root disk
+      cmdline: "console=hvc0 root=/dev/vda" # limakit.yml's cmdline + the root disk
 additionalDisks:
   # must stay FIRST: LinuxKit formats/mounts /dev/vdb as the data disk (limakit.yml); add others after it
   - name: limakit-docker # limactl disk create limakit-docker --size 50GiB

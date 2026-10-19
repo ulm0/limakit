@@ -10,8 +10,8 @@ export LIMA_CIDATA_MNT=/mnt/lima-cidata
 
 # The container has a private /dev (the host's is 0660 root, which locks out the ssh user); copy in only
 # what is needed (device rules in limakit.yml): disks, fuse (sshfs), vsock (guest agent, ssh over vsock),
-# kvm (nestedVirtualization), net/tun (rootless engines), tty1 (video.display login).
-for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control /hostdev/tty1; do
+# kvm (nestedVirtualization), net/tun (rootless engines).
+for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control; do
 	[ -e "$d" ] && [ ! -e "/dev/${d##*/}" ] && cp -a "$d" /dev/ || true
 done
 [ -e /hostdev/net/tun ] && mkdir -p /dev/net && cp -a /hostdev/net/tun /dev/net/
@@ -154,9 +154,6 @@ for i in $(seq 0 $(($(yq '.bootcmd | length' "$UD") - 1))); do
 done
 "$LIMA_CIDATA_MNT/boot.sh" || true
 echo "Cloud-init v. limakit finished at $(date)"
-
-# video.display: login prompt in the VZ window
-[ -e /dev/tty1 ] && (while :; do agetty --noclear tty1 linux; sleep 1; done) &
 
 # PID 1 must handle TERM (bare `sleep` ignores it); unmount Lima's fuse/virtiofs mounts on the way down
 trap 'umount -a -t fuse.sshfs,virtiofs || true; exit 0' TERM

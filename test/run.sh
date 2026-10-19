@@ -127,6 +127,9 @@ check "timezone = host" g "[ \"\$(cat /etc/timezone)\" = \"$(readlink /etc/local
 check "dns:" g 'grep -qx "nameserver 1.1.1.1" /etc/resolv.conf'
 check "caCerts (guest bundle)" g "grep -q '$(sed -n 2p "$T/ca.pem")' /etc/ssl/certs/ca-certificates.crt"
 check "dockerd pulls (CA bundle)" g 'docker pull -q busybox'
+check "dockerd set up ip6tables" g '! sudo grep -q "cannot set up ip6tables" /var/log/docker.log'
+check "docker memory/cpu limits" g '[ "$(docker run --rm -m 64m --cpus 0.5 alpine cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max | tr "\n" " ")" = "67108864 50000 100000 " ]'
+check "docker IPv6 network" g 'docker network create --ipv6 v6test && docker run --rm --network v6test alpine ip -6 addr show eth0 | grep -q "inet6 fd"; r=$?; docker network rm v6test; exit $r'
 check "vzNAT: lima0 default route metric 100" g 'ip route | grep -q "default via .* dev lima0 .* metric 100"'
 check "ssh agent forwarding" g '[ -S "$SSH_AUTH_SOCK" ]'
 check "X11 forwarding (guest side)" sh -c "DISPLAY=:0 ssh -F ~/.lima/$I/ssh.config -o ControlMaster=no -o ControlPath=none -Y lima-$I 'echo \$DISPLAY' 2>/dev/null | grep -q localhost:"
