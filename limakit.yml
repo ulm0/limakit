@@ -10,15 +10,21 @@ init:
 onboot:
   - name: sysctl
     image: linuxkit/sysctl:43ac1d39da329c3567fcb9689e5ca99de6d169b6
-    binds.add:
-      - /etc/sysctl.d/90-limakit.conf:/etc/sysctl.d/90-limakit.conf
+  # limakit's own sysctls, applied after LinuxKit's; a bind over the image's /etc/sysctl.d because its
+  # rootfs is read-only (a bind onto a file the image lacks makes runc fail to create the container)
+  - name: sysctl-limakit
+    image: linuxkit/sysctl:43ac1d39da329c3567fcb9689e5ca99de6d169b6
+    binds:
+      - /etc/limakit/sysctl.d:/etc/sysctl.d
   - name: sysfs
     image: linuxkit/sysfs:6d5bd933762f6b216744c711c6e876756cee9600
-  # the data disk: the FIRST Lima additionalDisk (vdb; see lima.yaml), formatted once if blank and mounted
-  # by label at /var/lib (docker data, guest /home, ssh host keys). Other additionalDisks are left to Lima.
-  - name: format
+  # data lives on the instance's own disk (Lima's `disk:` size), after the squashfs root at its start:
+  # map that free space to /dev/loop0 (offset = squashfs bytes_used, rounded up to 1 MiB, + 1 MiB), make an
+  # ext4 there once if blank (no partition: linuxkit's format can't name loop partitions) and mount it by
+  # label at /var/lib (docker data, guest /home, ssh host keys). Lima's additionalDisks are left to Lima.
+  - name: datadisk
     image: linuxkit/format:4f779c0b0d0ba145b7f03211b5cbf59fbbe12e54
-    command: ["/usr/bin/format", "-label", "limakit-data", "/dev/vdb"]
+    command: ["/bin/sh", "-c", "s=$(od -An -t u8 -j 40 -N 8 /dev/vda) && losetup -o $(( (s / 1048576 + 2) * 1048576 )) /dev/loop0 /dev/vda && { blkid /dev/loop0 >/dev/null || mkfs.ext4 -q -L limakit-data /dev/loop0; }"]
   - name: mount
     image: linuxkit/mount:bd1c3bb45e48e68e47a9456d1669f7119f855184
     command: ["/usr/bin/mountie", "-label", "limakit-data", "/var/lib"]
@@ -151,7 +157,7 @@ files:
       interface eth0
       metric 200
   # loose reverse-path filtering: with a second NIC (Lima networks:) strict mode drops its traffic
-  - path: etc/sysctl.d/90-limakit.conf
+  - path: etc/limakit/sysctl.d/90-limakit.conf
     mode: "0644"
     contents: |
       net.ipv4.conf.all.rp_filter = 2

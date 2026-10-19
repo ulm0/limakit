@@ -33,12 +33,11 @@ kernel: | $(LK)
 	[ "$(KERNEL_CONTEXT)" = "$$(docker context show)" ] || docker --context $(KERNEL_CONTEXT) save $(KERNEL_IMAGE) | docker load
 
 # Local testing with Lima. `run` recreates the instance from out/limakit-squashfs.img
-# every time (the image is copied at create); docker data survives on the limakit-docker disk.
+# every time (the image is copied at create), so docker data and /home start empty.
 INSTANCE := limakit
 .PHONY: run shell stop clean
 run: out/limakit-squashfs.img
 	-limactl delete -f $(INSTANCE)
-	limactl disk list 2>/dev/null | grep -q '^limakit-docker ' || limactl disk create limakit-docker --size 50GiB
 	limactl create --name $(INSTANCE) --tty=false lima.yaml \
 		--set '.images[0].location = "$(CURDIR)/out/limakit-squashfs.img" | .images[0].kernel.location = "$(CURDIR)/out/limakit-kernel"'
 	limactl start $(INSTANCE) --tty=false

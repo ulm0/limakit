@@ -22,16 +22,19 @@ check() { # check "name" cmd...  (passes when cmd exits 0)
 g() { limactl shell --workdir / "$I" bash -c "$1" 2>/dev/null; } # run in the guest
 cleanup() {
 	limactl delete -f "$I" >/dev/null 2>&1
-	limactl disk delete $I-data $I-extra >/dev/null 2>&1
+	limactl disk delete $I-extra >/dev/null 2>&1
 	rm -rf "$T" "$SHARE"
 }
 [ "${KEEP:-}" ] || trap cleanup EXIT # KEEP=1: leave the instance up for debugging
 
 # config: lima.yaml with absolute image paths, test disks, plus per-run overrides
 config() {
-	sed -e "s|https://github.com/[^ ]*/download/|$ROOT/out/|" -e "s|name: limakit-docker|name: $I-data|" -e "s|^mountType:.*|mountType: $1|" lima.yaml |
-		awk -v d="  - name: $I-extra\n    format: true\n    fsType: btrfs" '{print} /^    format: false/ {print d}'
+	sed -e "s|https://github.com/[^ ]*/download/|$ROOT/out/|" -e "s|^mountType:.*|mountType: $1|" lima.yaml
 	cat <<-EOF
+		additionalDisks:
+		  - name: $I-extra
+		    format: true
+		    fsType: btrfs
 		mounts:
 		  - location: "~"
 		  - location: $SHARE
@@ -71,8 +74,7 @@ config() {
 	shift
 	printf '%s\n' "$@"
 }
-start() { # start <config file>; disks are created on first use
-	limactl disk list 2>/dev/null | grep -q "^$I-data " || limactl disk create $I-data --size 10GiB >/dev/null
+start() { # start <config file>; the extra disk is created on first use
 	limactl disk list 2>/dev/null | grep -q "^$I-extra " || limactl disk create $I-extra --size 2GiB >/dev/null
 	limactl delete -f "$I" >/dev/null 2>&1
 	limactl create --name "$I" --tty=false "$1" >"$T/start.log" 2>&1 && limactl start "$I" --tty=false >>"$T/start.log" 2>&1
@@ -108,6 +110,8 @@ echo "== boot 1: virtiofs, vzNAT, provisioning, disks, host integration"
 if ! start "$T/a.yaml"; then fail "boot (see below)"; tail -n 20 "$T/start.log"; exit 1; fi
 pass "boot (non-plain READY)"
 check "guest agent running" g 'pgrep lima-guestagent'
+check "data on the instance disk (loop0 after the squashfs)" g 'mount | grep -q "^/dev/loop0 on /home "'
+check "sysctls applied (LinuxKit's + limakit's)" g '[ "$(cat /proc/sys/kernel/kptr_restrict /proc/sys/net/ipv4/conf/all/rp_filter | tr "\\n" " ")" = "2 2 " ]'
 check "guest agent eBPF port ticker" g 'sudo grep -q "eBPF ticker" /var/log/lima-guestagent.log'
 check "ssh over vsock" grep -q "listening on the vsock port" ~/.lima/$I/ha.stderr.log
 check "virtiofs ~ (ro)" g "mount | grep -q 'on $HOME type virtiofs (ro'"
@@ -117,6 +121,7 @@ check "writable mount: container write reaches host" grep -qx w "$SHARE/from-con
 g 'docker run -d --name tcp -p 18080:80 nginx:alpine; docker run -d --name udp -p 15300:5300/udp alpine sh -c "apk add -q socat && socat UDP-RECVFROM:5300,fork EXEC:\"echo pong\""' >/dev/null
 check "TCP port forward" port_fwd 18080 tcp
 check "UDP port forward" port_fwd 15300 udp
+check "dhcpcd port 68 not forwarded" sh -c "! grep -q 'Forwarding UDP from 0.0.0.0:68' ~/.lima/$I/ha.stderr.log"
 check "docker socket on host" env DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker ps
 echo x >"$T/cp" && check "limactl cp" sh -c "limactl cp '$T/cp' $I:/tmp/cp 2>/dev/null && [ \"\$(limactl shell $I cat /tmp/cp 2>/dev/null)\" = x ]"
 check "provision system + param" grep -qx "system hello-param" "$SHARE/prov-system"
@@ -140,8 +145,6 @@ if [ "${ROSETTA:-}" ]; then
 	check "Rosetta: amd64 container" g '[ "$(docker run --rm --platform linux/amd64 alpine uname -m)" = x86_64 ]'
 	check "Rosetta: rosettad cache via CDI" g 'docker run --rm --platform linux/amd64 --device lima-vm.io/rosetta=cached alpine test -S /run/rosettad/rosetta.sock'
 else skip "Rosetta (not installed on host)"; fi
-# the amd64 run re-pointed the alpine tag on the (shared) data disk; later boots may not have Rosetta
-g 'docker pull -q --platform linux/arm64 alpine' >/dev/null
 g 'echo h > ~/persist; sudo sh -c "echo r > /root/persist; echo u > /usr/local/persist"'
 key=$(g 'ssh-keygen -lf /etc/ssh/keys/ssh_host_ed25519_key.pub')
 s=$(date +%s); limactl stop "$I" >/dev/null 2>&1; took=$(($(date +%s) - s))

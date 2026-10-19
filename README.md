@@ -16,9 +16,10 @@ From a release, no build needed (once the first release is out): `lima.yaml` poi
 release's kernel and squashfs, and each release also ships a `lima.yaml` pinned to its own files and digests:
 
 ```sh
-limactl disk create limakit-docker --size 50GiB
 limactl start --name limakit lima.yaml   # or the lima.yaml attached to a release
 ```
+
+Each instance keeps its data on its own disk, so you can run several (`--name work`, `--disk 50`).
 
 To build it yourself:
 
@@ -48,7 +49,7 @@ docker run --rm -p 8080:80 nginx   # reachable on localhost:8080
 ```
 
 `make run` recreates the instance on every run, because Lima copies the image when it creates an instance.
-Docker data lives on the `limakit-docker` disk, so it survives.
+That also starts Docker data and `/home` fresh.
 
 ## How it works
 
@@ -67,10 +68,12 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
 
 ## Things to know
 
-- **The data disk must stay first** under `additionalDisks` in `lima.yaml`. LinuxKit formats it once if it's
-  blank (label `limakit-data`, `/dev/vdb`) and mounts it at `/var/lib`, where docker data, the guest `/home`, `/root`, `/usr/local` and
-  the ssh host keys live. Add other disks after it; Lima formats those (`format`/`fsType` work). limakit also works around a Lima
-  bug that re-formats disks whose names don't fit the filesystem's label limit (ext4: 11 chars, xfs: 7).
+- **Data lives on the instance's own disk** (`disk:` in `lima.yaml`, 100 GiB by default, sparse on the host),
+  after the squashfs root: docker data, the guest `/home`, `/root`, `/usr/local` and the ssh host keys. It
+  survives restarts, not `limactl delete` (or a recreate, which is how you move to a new release).
+- **`additionalDisks` are Lima's**: Lima formats and mounts them (`format`/`fsType` work). limakit also works
+  around a Lima bug that re-formats disks whose names don't fit the filesystem's label limit (ext4: 11 chars,
+  xfs: 7).
 - **Docker only sees Lima mounts under `/Users`, `/Volumes`, `/mnt`, `/home` and `/tmp`.** A mount elsewhere works in the
   guest shell, but `docker run -v` sees an empty directory. The boot log warns about such mounts.
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under

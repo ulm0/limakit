@@ -12,13 +12,16 @@ images:
     kernel:
       location: https://github.com/ulm0/limakit/releases/latest/download/limakit-kernel
       cmdline: "console=hvc0 root=/dev/vda" # limakit.yml's cmdline + the root disk
-additionalDisks:
-  # must stay FIRST: LinuxKit formats/mounts /dev/vdb as the data disk (limakit.yml); add others after it
-  - name: limakit-docker # limactl disk create limakit-docker --size 50GiB
-    format: false # LinuxKit's format/mount own it; without udev Lima's 05-lima-disks.sh would re-format it every boot
+disk: 60GiB # also holds docker data, /home and ssh host keys (after the squashfs); sparse on the host
+cpus: 4
+memory: 8GiB
 containerd:
   system: false
   user: false
 portForwards:
   - guestSocket: /var/run/docker.sock
     hostSocket: "{{.Dir}}/sock/docker.sock"
+  - guestPort: 68 # dhcpcd's client socket, not a service
+    guestIP: 0.0.0.0 # dhcpcd binds 0.0.0.0; the default 127.0.0.1 doesn't match it
+    proto: udp
+    ignore: true
