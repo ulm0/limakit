@@ -89,9 +89,11 @@ services:
       - /var/lib/lima-rosettad:/var/cache/rosettad
       - /var/lima-share/host-services:/run/host-services
     # wait (up to 30s) for the CA bundle the lima service writes, so early pulls don't fail TLS.
+    # --host /var/run/docker.sock: containers that bind-mount the socket (k3d image import, testcontainers)
+    # resolve that path in this namespace.
     # --cgroup-parent: this service's own cgroup is /docker (dockerd's default parent); containers inside it
     # would break cgroup v2's no-internal-processes rule and every --memory/--cpus run fails
-    command: ["/bin/sh", "-c", "i=0; until [ -s /etc/ssl/certs/ca-certificates.crt ] || [ $i -ge 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/local/bin/docker-init -- /usr/local/bin/dockerd --host=unix:///run/dockersock/docker.sock --group=999 --cgroup-parent=/docker-containers"]
+    command: ["/bin/sh", "-c", "i=0; until [ -s /etc/ssl/certs/ca-certificates.crt ] || [ $i -ge 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/local/bin/docker-init -- /usr/local/bin/dockerd --host=unix:///run/dockersock/docker.sock --host=unix:///var/run/docker.sock --group=999 --cgroup-parent=/docker-containers"]
   # fstrim /var/lib/docker after image deletes so the disk image can shrink
   - name: trim-after-delete
     image: linuxkit/trim-after-delete:012784ce3bdd59d42799dbf6555fe6da972cc721

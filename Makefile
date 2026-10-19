@@ -20,7 +20,9 @@ lima-image: $(wildcard lima-init/* lima-init/shims/*)
 # kernel+squashfs: Lima boots out/limakit-kernel directly with the squashfs as root disk (lima.yaml),
 # so the root filesystem stays on disk instead of unpacking into RAM. linuxkit takes images from the
 # docker cache first (local builds win), then pulls from GHCR.
+# linuxkit v1.8.2 resolves ghcr.io names against Docker Hub when pulling, so docker pulls the kernel first
 out/limakit-squashfs.img: limakit.yml lima-image | $(LK)
+	docker image inspect $(KERNEL_IMAGE) >/dev/null 2>&1 || docker pull -q $(KERNEL_IMAGE)
 	mkdir -p out && $(LK) build --docker --decompress-kernel --format kernel+squashfs --arch arm64 --dir out --name limakit limakit.yml
 
 # Custom kernel (allnoconfig + kernel/limakit.config); ~25 min, wants >=6 CPUs/8GiB.
