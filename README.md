@@ -85,6 +85,7 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 
 - **Works:**
   - docker: container memory/CPU limits, IPv6 networks
+  - Kubernetes in docker: k3s, k3d with flannel (default) or Cilium (BTF, tc BPF, VXLAN/GENEVE in the kernel)
   - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
   - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
   - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `ansible`, `param`, probes

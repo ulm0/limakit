@@ -65,6 +65,11 @@ services:
         major: 10
         minor: 232
         mode: "0666"
+      - path: /dev/kmsg # kubelet (k3s/k3d nodes) opens it; privileged containers get dind's /dev
+        type: c
+        major: 1
+        minor: 11
+        mode: "0600"
     mounts:
       - type: cgroup
         options: ["rw","nosuid","noexec","nodev","relatime"]

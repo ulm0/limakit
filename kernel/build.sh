@@ -35,10 +35,17 @@ sed -i.bak -e "s/^KERNEL_VERSION=.*/KERNEL_VERSION=$KERNEL_VERSION/" -e "s/^KERN
 rm -f "$K/$SERIES/build-args.bak"
 
 # 3. allnoconfig + limakit.config, normalized with olddefconfig (LinuxKit's build rejects a config that isn't),
-#    in LinuxKit's own builder image: the config records the compiler version
+#    in LinuxKit's own builder image: the config records the compiler and pahole versions
 BUILD_IMAGE=$(sed -n 's/^BUILD_IMAGE=//p' "$K/$SERIES/build-args")
+# BTF (Cilium's CONFIG_DEBUG_INFO_BTF) needs pahole, and python3 for resolve_btfids' libbpf headers; neither is
+# in the builder's package mirror: take them from Alpine
+PAHOLE='v=v$(cut -d. -f1,2 /etc/alpine-release) && apk add -q --repository https://dl-cdn.alpinelinux.org/alpine/$v/main --repository https://dl-cdn.alpinelinux.org/alpine/$v/community pahole python3'
+grep -q pahole "$K/common/Dockerfile" ||
+	awk -v run="RUN $PAHOLE" '{print} /^    zlib-dev$/ && !done {print run; done=1}' "$K/common/Dockerfile" >"$K/common/Dockerfile.new" &&
+	mv "$K/common/Dockerfile.new" "$K/common/Dockerfile"
 docker run --rm --platform linux/arm64 -v "$DIR:/k" "$BUILD_IMAGE" sh -euc "
 	apk add -q bash build-base bc bison flex perl linux-headers openssl-dev elfutils-dev curl xz >/dev/null
+	$PAHOLE >/dev/null
 	cd /tmp && curl -fsSL https://cdn.kernel.org/pub/linux/kernel/v${KERNEL_VERSION%%.*}.x/linux-$KERNEL_VERSION.tar.xz | tar xJ
 	cd linux-$KERNEL_VERSION && make ARCH=arm64 allnoconfig >/dev/null
 	grep '^CONFIG_' /k/limakit.config | while IFS== read -r o v; do scripts/config --set-val \"\${o#CONFIG_}\" \"\$v\"; done

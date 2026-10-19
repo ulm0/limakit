@@ -134,7 +134,43 @@ check "caCerts (guest bundle)" g "grep -q '$(sed -n 2p "$T/ca.pem")' /etc/ssl/ce
 check "dockerd pulls (CA bundle)" g 'docker pull -q busybox'
 check "dockerd set up ip6tables" g '! sudo grep -q "cannot set up ip6tables" /var/log/docker.log'
 check "docker memory/cpu limits" g '[ "$(docker run --rm -m 64m --cpus 0.5 alpine cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max | tr "\n" " ")" = "67108864 50000 100000 " ]'
+check "k3s node Ready in docker (k3d)" g 'docker run -d --privileged --name k3s rancher/k3s:v1.37.1-k3s1 server --disable=traefik >/dev/null && for _ in $(seq 60); do docker exec k3s kubectl get nodes 2>/dev/null | grep -q " Ready " && r=0 && break; r=1; sleep 3; done; docker rm -f k3s >/dev/null; exit $r'
 check "docker IPv6 network" g 'docker network create --ipv6 v6test && docker run --rm --network v6test alpine ip -6 addr show eth0 | grep -q "inet6 fd"; r=$?; docker network rm v6test; exit $r'
+
+# Kubernetes in docker with k3d, from the host: plain flannel, then Cilium (helm). Needs k3d + kubectl (+ helm).
+K3S=rancher/k3s:v1.37.1-k3s1 CILIUM=1.20.3
+k3d_up() { # k3d_up <cluster> [k3d args]
+	local c=$1; shift
+	DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d cluster create "$c" --image "$K3S" --timeout 300s \
+		--kubeconfig-update-default=false --kubeconfig-switch-context=false "$@" >>"$T/k3d.log" 2>&1 &&
+		DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d kubeconfig get "$c" >"$T/$c.kubeconfig"
+}
+k3d_down() { DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d cluster delete "$1" >>"$T/k3d.log" 2>&1; }
+k8s_smoke() { # k8s_smoke <cluster>: nodes Ready, a pod reachable through a Service by name (CNI + DNS + kube-proxy)
+	local k=(kubectl --kubeconfig "$T/$1.kubeconfig")
+	"${k[@]}" wait node --all --for=condition=Ready --timeout=300s &&
+		"${k[@]}" run web --image=nginx:alpine --port 80 --expose &&
+		"${k[@]}" wait pod/web --for=condition=Ready --timeout=300s &&
+		"${k[@]}" run probe --image=curlimages/curl --rm -i --restart=Never --pod-running-timeout=300s -- curl -fsS -o /dev/null http://web
+}
+cilium_up() { # cilium_up <cluster>: bpffs + cgroup2 (shared) in each node, then the chart
+	local n
+	for n in $(DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker ps --filter "name=k3d-$1-(server|agent)" --format '{{.Names}}'); do
+		DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker exec "$n" sh -c 'mount bpffs /sys/fs/bpf -t bpf && mount --make-shared /sys/fs/bpf && mkdir -p /run/cilium/cgroupv2 && mount -t cgroup2 none /run/cilium/cgroupv2 && mount --make-shared /run/cilium/cgroupv2' || return 1
+	done
+	helm install cilium cilium --repo https://helm.cilium.io --version "$CILIUM" --namespace kube-system \
+		--kubeconfig "$T/$1.kubeconfig" --set operator.replicas=1 --set ipam.mode=kubernetes \
+		--set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --wait --timeout 10m >>"$T/k3d.log" 2>&1
+}
+if command -v k3d >/dev/null && command -v kubectl >/dev/null; then
+	if k3d_up lk-flannel; then check "k3d + flannel: pod reachable through a Service" k8s_smoke lk-flannel; else fail "k3d + flannel: cluster create"; tail -n 15 "$T/k3d.log"; fi
+	k3d_down lk-flannel
+	if ! command -v helm >/dev/null; then skip "k3d + Cilium (no helm)"
+	elif k3d_up lk-cilium --k3s-arg "--flannel-backend=none@server:*" --k3s-arg "--disable-network-policy@server:*" && cilium_up lk-cilium; then
+		check "k3d + Cilium: pod reachable through a Service" k8s_smoke lk-cilium
+	else fail "k3d + Cilium: cluster/Cilium install"; tail -n 15 "$T/k3d.log"; fi
+	k3d_down lk-cilium
+else skip "k3d (no k3d/kubectl on host)"; fi
 check "vzNAT: lima0 default route metric 100" g 'ip route | grep -q "default via .* dev lima0 .* metric 100"'
 check "ssh agent forwarding" g '[ -S "$SSH_AUTH_SOCK" ]'
 check "X11 forwarding (guest side)" sh -c "DISPLAY=:0 ssh -F ~/.lima/$I/ssh.config -o ControlMaster=no -o ControlPath=none -Y lima-$I 'echo \$DISPLAY' 2>/dev/null | grep -q localhost:"
