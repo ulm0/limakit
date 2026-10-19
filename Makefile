@@ -3,7 +3,7 @@ LK := bin/linuxkit
 LINUXKIT_VERSION := v1.8.2
 # images limakit.yml uses; local builds tag these names, otherwise linuxkit pulls them from GHCR (CI pushes them)
 REGISTRY := ghcr.io/ulm0/limakit
-KERNEL_VERSION ?= 6.12.59
+KERNEL_VERSION ?= 6.18.57
 KERNEL_IMAGE := $(REGISTRY)/kernel:$(KERNEL_VERSION)
 LIMA_IMAGE := $(REGISTRY)/lima:latest
 all: out/limakit-squashfs.img
