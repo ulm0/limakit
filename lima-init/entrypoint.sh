@@ -104,6 +104,15 @@ done
 # Rosetta binfmt registration (vz rosetta.binfmt) and the guest agent's eBPF port ticker
 mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || echo "WARNING: no binfmt_misc"
 mountpoint -q /sys/kernel/tracing || mount -t tracefs tracefs /sys/kernel/tracing || echo "WARNING: no tracefs"
+# Lima's 05-rosetta-volume.sh registers Rosetta with bash's echo, which bash 5.3 issues as two writes: the
+# entry, then a lone newline the kernel rejects (EINVAL), aborting the script before rosettad and the CDI spec.
+# Register it here with one write (busybox echo); the script then finds the entry and carries on.
+if [ "${LIMA_CIDATA_ROSETTA_ENABLED:-}" = true ] && [ "${LIMA_CIDATA_ROSETTA_BINFMT:-}" = true ] &&
+	[ ! -e /proc/sys/fs/binfmt_misc/rosetta ]; then
+	mountpoint -q /mnt/lima-rosetta || mount /mnt/lima-rosetta # the F flag opens the interpreter now
+	r=$(sed -n 's/^[[:space:]]*rosetta_binfmt="\(.*\)"$/\1/p' "$LIMA_CIDATA_MNT/boot.Linux/05-rosetta-volume.sh")
+	[ -n "$r" ] && busybox echo "$r" >/proc/sys/fs/binfmt_misc/register
+fi
 
 # sshd; host keys persist on the data disk (/var/lib/lima-ssh) so they don't change every boot
 for t in rsa ecdsa ed25519; do

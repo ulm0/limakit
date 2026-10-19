@@ -67,16 +67,21 @@ namespace through shared roots bound `rshared` → `rslave`, so `docker run -v ~
 Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 
 - **Works:**
-  - mounts: virtiofs (ro/rw)
-  - port forwarding: TCP and UDP, plus the docker socket on the host
-  - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `param`, probes
-  - `additionalDisks`, including `fsType: btrfs`
-  - networking: `networks: vzNAT`, `dns:`
+  - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
+  - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
+  - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `ansible`, `param`, probes
+  - `additionalDisks`, including `fsType: btrfs`; discard/trim reaches the host disk file
+  - networking: `networks: vzNAT`, `networks: lima: user-v2` (incl. `lima-<name>.internal`), `dns:`,
+    `host.lima.internal` (also from containers)
   - host integration: `caCerts`, timezone, `env:`, `ssh.forwardAgent`, SSH over vsock
-  - VM features: `nestedVirtualization`, `audio`
+  - VM features: Rosetta (binfmt plus the `rosettad` cache via CDI: `--device lima-vm.io/rosetta=cached`),
+    `nestedVirtualization`, `audio`
   - lifecycle: `limactl cp`, `limactl stop`
-- **Implemented, not tested:** Rosetta (needs Rosetta installed on the host), `video.display` login prompt,
-  X11 forwarding, `provision: ansible`, reverse-sshfs mounts, `user-v2` and `socket_vmnet` networks.
+- **Works guest-side, needs a host install to use:**
+  - X11 forwarding: the guest sets up `DISPLAY`; drawing needs XQuartz on the Mac.
+  - `socket_vmnet` networks: need `socket_vmnet` plus `limactl sudoers` on the host (see Lima's docs).
+    Not tested here.
+- **Not tested:** `video.display` (a console window on the Mac; not needed for Docker).
 - **Not supported:**
   - Lima's built-in containerd (`containerd.system`/`user`, so `nerdctl.lima` too) and templates that need
     systemd (k8s, k0s, podman, faasd). Lima requires `systemctl` for these.
