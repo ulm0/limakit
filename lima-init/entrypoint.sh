@@ -10,8 +10,8 @@ export LIMA_CIDATA_MNT=/mnt/lima-cidata
 
 # The container has a private /dev (the host's is 0660 root, which locks out the ssh user); copy in only
 # what is needed (device rules in limakit.yml): disks, fuse (sshfs), vsock (guest agent, ssh over vsock),
-# kvm (nestedVirtualization), net/tun (rootless engines), snd (audio.device), tty1 (video.display login).
-for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control /hostdev/tty1 /hostdev/snd; do
+# kvm (nestedVirtualization), net/tun (rootless engines), tty1 (video.display login).
+for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control /hostdev/tty1; do
 	[ -e "$d" ] && [ ! -e "/dev/${d##*/}" ] && cp -a "$d" /dev/ || true
 done
 [ -e /hostdev/net/tun ] && mkdir -p /dev/net && cp -a /hostdev/net/tun /dev/net/
@@ -28,10 +28,11 @@ for d in /dev/vd*; do
 	[ -n "$l" ] && ln -sf "../../${d##*/}" "/dev/disk/by-label/$l" || true
 done
 
-mkdir -p -m 700 "$LIMA_CIDATA_MNT"
+install -d -m 700 "$LIMA_CIDATA_MNT"
 mountpoint -q "$LIMA_CIDATA_MNT" || mount -o ro,mode=0700,dmode=0700,overriderockperm,exec,uid=0 /dev/disk/by-label/cidata "$LIMA_CIDATA_MNT"
 UD=$LIMA_CIDATA_MNT/user-data
 
+# shellcheck disable=SC2163 # lines are KEY=value
 while read -r line; do [ -n "$line" ] && export "$line"; done <"$LIMA_CIDATA_MNT/lima.env"
 yq() { "$LIMA_CIDATA_MNT/lima-guestagent" yq "$@"; } # cidata ships yq inside the guest agent
 
@@ -71,13 +72,11 @@ fi
 # docker.sock is root:999 (dockerd --group=999 in limakit.yml)
 getent group 999 >/dev/null || groupadd -g 999 docker
 groupadd -f kvm
-groupadd -f audio
-usermod -aG "$(getent group 999 | cut -d: -f1),kvm,audio" "$LIMA_CIDATA_USER"
+usermod -aG "$(getent group 999 | cut -d: -f1),kvm" "$LIMA_CIDATA_USER"
 [ -e /dev/kvm ] && chgrp kvm /dev/kvm && chmod 660 /dev/kvm
-[ -d /dev/snd ] && chgrp -R audio /dev/snd && chmod -R g+rw /dev/snd
 gid=$(id -g "$LIMA_CIDATA_USER")
 
-mkdir -p -m 700 "$home/.ssh"
+install -d -m 700 "$home/.ssh"
 yq -r '.users[0]."ssh-authorized-keys"[]' "$UD" >"$home/.ssh/authorized_keys"
 chmod 600 "$home/.ssh/authorized_keys"
 # ssh sessions: Lima's env/propagateProxyEnv (etc_environment) and XDG_RUNTIME_DIR (no pam_systemd here)

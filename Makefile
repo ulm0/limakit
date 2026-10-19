@@ -1,7 +1,12 @@
 export DOCKER_HOST ?= $(shell docker context inspect --format "{{.Endpoints.docker.Host}}")
 LK := bin/linuxkit
 LINUXKIT_VERSION := v1.8.2
-all: out/limakit-efi.img
+# images limakit.yml uses; local builds tag these names, otherwise linuxkit pulls them from GHCR (CI pushes them)
+REGISTRY := ghcr.io/ulm0/limakit
+KERNEL_VERSION ?= 6.12.59
+KERNEL_IMAGE := $(REGISTRY)/kernel:$(KERNEL_VERSION)
+LIMA_IMAGE := $(REGISTRY)/lima:latest
+all: out/limakit-squashfs.img
 
 $(LK):
 	mkdir -p bin
@@ -9,31 +14,33 @@ $(LK):
 	chmod +x $@
 
 lima-image: $(wildcard lima-init/* lima-init/shims/*)
-	docker build -t limakit/lima:dev lima-init
+	docker build -t $(LIMA_IMAGE) lima-init
 	touch $@
 
-# linuxkit pulls from the docker cache first, so the local image is picked up
-out/limakit-efi.img: limakit.yml lima-image | $(LK)
-	mkdir -p out && $(LK) build --docker --format raw-efi --arch arm64 --size 2048M --dir out --name limakit limakit.yml
-	mv out/limakit-efi.raw $@ 2>/dev/null || mv out/limakit-efi.img $@ 2>/dev/null || true
+# kernel+squashfs: Lima boots out/limakit-kernel directly with the squashfs as root disk (lima.yaml),
+# so the root filesystem stays on disk instead of unpacking into RAM. linuxkit takes images from the
+# docker cache first (local builds win), then pulls from GHCR.
+out/limakit-squashfs.img: limakit.yml lima-image | $(LK)
+	mkdir -p out && $(LK) build --docker --decompress-kernel --format kernel+squashfs --arch arm64 --dir out --name limakit limakit.yml
 
 # Custom kernel (kernel/limakit.config on top of LinuxKit's); ~25 min, wants >=6 CPUs/8GiB.
 # KERNEL_CONTEXT: docker context to build on; the image is then copied to the current context.
-KERNEL_VERSION ?= 6.12.59
 KERNEL_CONTEXT ?= $(shell docker context show)
 .PHONY: kernel
 kernel: | $(LK)
 	DOCKER_HOST=$$(docker context inspect --format '{{.Endpoints.docker.Host}}' $(KERNEL_CONTEXT)) kernel/build.sh $(KERNEL_VERSION)
-	[ "$(KERNEL_CONTEXT)" = "$$(docker context show)" ] || docker --context $(KERNEL_CONTEXT) save linuxkit/kernel:$(KERNEL_VERSION)-limakit | docker load
+	docker --context $(KERNEL_CONTEXT) tag linuxkit/kernel:$(KERNEL_VERSION)-limakit $(KERNEL_IMAGE)
+	[ "$(KERNEL_CONTEXT)" = "$$(docker context show)" ] || docker --context $(KERNEL_CONTEXT) save $(KERNEL_IMAGE) | docker load
 
-# Local testing with Lima. `run` recreates the instance from out/limakit-efi.img
+# Local testing with Lima. `run` recreates the instance from out/limakit-squashfs.img
 # every time (the image is copied at create); docker data survives on the limakit-docker disk.
 INSTANCE := limakit
 .PHONY: run shell stop clean
-run: out/limakit-efi.img
+run: out/limakit-squashfs.img
 	-limactl delete -f $(INSTANCE)
 	limactl disk list 2>/dev/null | grep -q '^limakit-docker ' || limactl disk create limakit-docker --size 50GiB
-	limactl create --name $(INSTANCE) --tty=false lima.yaml
+	limactl create --name $(INSTANCE) --tty=false lima.yaml \
+		--set '.images[0].location = "$(CURDIR)/out/limakit-squashfs.img" | .images[0].kernel.location = "$(CURDIR)/out/limakit-kernel"'
 	limactl start $(INSTANCE) --tty=false
 	@echo "try: make shell   (or: docker -H ssh://lima-$(INSTANCE) ps, with ~/.lima/$(INSTANCE)/ssh.config in ~/.ssh/config)"
 

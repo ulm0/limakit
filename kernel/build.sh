@@ -25,7 +25,7 @@ K=$SRC/kernel
 
 # 2. series dir; for a series LinuxKit doesn't have, copy the newest one
 if [ ! -d "$K/$SERIES" ]; then
-	BASE=$(cd "$K" && ls -d [0-9]*.x | grep -v -- -rt | sort -V | tail -n 1)
+	BASE=$(cd "$K" && printf '%s\n' [0-9]*.x | grep -v -- -rt | sort -V | tail -n 1)
 	echo "LinuxKit has no $SERIES; starting from $BASE"
 	cp -R "$K/$BASE" "$K/$SERIES"
 	rm -rf "$K/$SERIES/patches" # patches are series-specific
@@ -44,7 +44,10 @@ docker run --rm --platform linux/arm64 -v "$DIR:/k" "$BUILD_IMAGE" sh -euc "
 	grep '^CONFIG_' /k/limakit.config | while IFS== read -r o v; do scripts/config --set-val \"\${o#CONFIG_}\" \"\$v\"; done
 	make ARCH=arm64 olddefconfig >/dev/null
 	# a select/depends chain that isn't met silently drops an option: fail instead
-	grep '^CONFIG_' /k/limakit.config | while read -r l; do grep -qx \"\$l\" .config || { echo \"not applied: \$l\"; exit 1; }; done
+	grep '^CONFIG_' /k/limakit.config | while read -r l; do
+		case \"\$l\" in *=n) l=\"# \${l%=n} is not set\" ;; esac
+		grep -qx \"\$l\" .config || { echo \"not applied: \$l\"; exit 1; }
+	done
 	cp .config /k/config-aarch64"
 cp "$DIR/config-aarch64" "$K/$SERIES/config-aarch64"
 

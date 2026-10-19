@@ -1,4 +1,4 @@
-FROM alpine:3.23@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 # What Lima's (non-plain) boot scripts and a user session need: sshd, the guest agent's deps,
 # sshfs/virtiofs mounts and the docker CLI (dockerd itself is the separate `docker` service).
 RUN apk add --no-cache openssh-server openssh-sftp-server bash zsh sudo shadow shadow-uidmap util-linux blkid agetty \

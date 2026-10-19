@@ -4,9 +4,14 @@ base:
 vmType: vz
 arch: aarch64
 mountType: virtiofs # needs the custom kernel (CONFIG_VIRTIO_FS=y)
+# Latest release. Each release also ships a lima.yaml pinned to its own URLs and digests;
+# `make run` swaps in the locally built out/limakit-{squashfs.img,kernel}.
 images:
-  - location: ./out/limakit-efi.img
+  - location: https://github.com/ulm0/limakit/releases/latest/download/limakit-squashfs.img # read-only root, booted directly (no RAM disk)
     arch: aarch64
+    kernel:
+      location: https://github.com/ulm0/limakit/releases/latest/download/limakit-kernel
+      cmdline: "console=tty0 console=hvc0 root=/dev/vda" # limakit.yml's cmdline + the root disk
 additionalDisks:
   # must stay FIRST: LinuxKit formats/mounts /dev/vdb as the data disk (limakit.yml); add others after it
   - name: limakit-docker # limactl disk create limakit-docker --size 50GiB
@@ -17,4 +22,3 @@ containerd:
 portForwards:
   - guestSocket: /var/run/docker.sock
     hostSocket: "{{.Dir}}/sock/docker.sock"
-memory: 4GiB # image unpacks to ~1GiB in RAM (initramfs)

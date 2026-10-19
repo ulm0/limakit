@@ -12,7 +12,19 @@ dynamic port forwarding, provisioning scripts and so on.
 
 ## Quick start
 
-The image uses a custom kernel that isn't published anywhere, so build it once first (~25 min):
+From a release, no build needed (once the first release is out): `lima.yaml` points at the latest
+release's kernel and squashfs, and each release also ships a `lima.yaml` pinned to its own files and digests:
+
+```sh
+limactl disk create limakit-docker --size 50GiB
+limactl start --name limakit lima.yaml   # or the lima.yaml attached to a release
+```
+
+To build it yourself:
+
+`make` builds the `lima` image and pulls the kernel from GHCR (once CI has published it), unless you've
+built the kernel locally.
+To build the kernel yourself (~25 min):
 
 ```sh
 make kernel                              # on the current docker context
@@ -22,7 +34,7 @@ make kernel KERNEL_CONTEXT=colima-kbuild # or on a bigger one; the image is copi
 Then build the image and start it:
 
 ```sh
-make run      # builds out/limakit-efi.img, (re)creates the `limakit` instance, starts it
+make run      # builds out/limakit-{kernel,squashfs.img}, (re)creates the `limakit` instance, starts it
 make shell    # limactl shell limakit
 make stop     # limactl stop -f limakit
 make clean    # delete the instance and build outputs (the data disk is kept)
@@ -40,7 +52,9 @@ Docker data lives on the `limakit-docker` disk, so it survives.
 
 ## How it works
 
-LinuxKit's root filesystem is read-only and lives in RAM. Everything runs as containerd services:
+The image is LinuxKit's `kernel+squashfs` format: Lima boots the kernel directly and mounts the squashfs
+read-only as the root disk, so nothing is unpacked into RAM (an idle VM uses ~150 MB). Everything runs as
+containerd services:
 
 | Service | Role |
 |---|---|
@@ -59,7 +73,6 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
   bug that re-formats disks whose names don't fit the filesystem's label limit (ext4: 11 chars, xfs: 7).
 - **Docker only sees Lima mounts under `/Users`, `/Volumes`, `/mnt`, `/home` and `/tmp`.** A mount elsewhere works in the
   guest shell, but `docker run -v` sees an empty directory. The boot log warns about such mounts.
-- **Memory:** the whole image unpacks into RAM (~1 GiB), so the VM needs ≥ 4 GiB (`memory:` in `lima.yaml`).
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under
   `/var/lib` or the shared roots.
 
@@ -76,18 +89,35 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
     `host.lima.internal` (also from containers)
   - host integration: `caCerts`, timezone, `env:`, `ssh.forwardAgent`, SSH over vsock
   - VM features: Rosetta (binfmt plus the `rosettad` cache via CDI: `--device lima-vm.io/rosetta=cached`),
-    `nestedVirtualization`, `audio`
+    `nestedVirtualization`
   - lifecycle: `limactl cp`, `limactl stop`
 - **Works guest-side, needs a host install to use:**
   - X11 forwarding: the guest sets up `DISPLAY`; drawing needs XQuartz on the Mac.
   - `socket_vmnet` networks: need `socket_vmnet` plus `limactl sudoers` on the host (see Lima's docs).
     Not tested here.
 - **Not tested:** `video.display` (a console window on the Mac; not needed for Docker).
+- **Left out on purpose:** `audio` (the guest gets no sound device access).
 - **Not supported:**
   - Lima's built-in containerd (`containerd.system`/`user`, so `nerdctl.lima` too) and templates that need
     systemd (k8s, k0s, podman, faasd). Lima requires `systemctl` for these.
   - Snapshots and TPM, which Lima's vz driver doesn't implement.
   - `mdns` (Lima only supports it via systemd-resolved).
+
+## Testing and CI
+
+`test/run.sh` boots a throwaway `limakit-test` instance twice (virtiofs + vzNAT, then reverse-sshfs +
+user-v2) and checks every feature above. Checks the host can't run are skipped: no Rosetta, a chip without
+nested virtualization, or no `ansible-playbook`.
+
+`.github/workflows/build.yml` builds on GitHub's arm64 runners (`ubuntu-24.04-arm`) and publishes to
+`ghcr.io/<owner>/limakit/`:
+
+- `kernel:<version>` (what `limakit.yml` uses) and `kernel:<version>-<hash>`: rebuilt only when
+  `kernel/limakit.config` or `kernel/build.sh` change
+- `lima:latest` (what `limakit.yml` uses), `lima:<sha>` and `lima:<tag>`: the `lima-init` service image
+- the kernel and squashfs as a workflow artifact, attached to a GitHub Release on `v*` tags
+
+Hosted runners can't boot the image (VZ needs nested virtualization), so `test/run.sh` runs on a Mac.
 
 ## Kernel
 
@@ -97,7 +127,7 @@ Lima feature that needs it. `kernel/build.sh` does the following:
 1. Checks out LinuxKit's kernel packaging at a pinned commit.
 2. Applies the options and normalizes the config with `olddefconfig` in LinuxKit's own builder image.
 3. Fails if any option didn't take.
-4. Builds `linuxkit/kernel:<version>-limakit`.
+4. Builds the kernel, tagged `ghcr.io/ulm0/limakit/kernel:<version>` (the name `limakit.yml` uses).
 
 The resulting full config is kept in `kernel/config-aarch64` for review.
 
