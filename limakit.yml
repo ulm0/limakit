@@ -43,7 +43,7 @@ services:
     image: linuxkit/rngd:984eb580ecb63986f07f626b61692a97aacd7198
   - name: ntpd
     image: linuxkit/openntpd:2508f1d040441457a0b3e75744878afdf61bc473
-  # Shared roots: Lima mounts (virtiofs/sshfs) are made in the lima service under these paths and
+  # Shared roots (/Users, /Volumes, /mnt, /home, /tmp): Lima mounts (virtiofs/sshfs) are made in the lima service under these paths and
   # propagate (rshared -> rslave) into dockerd's namespace at the same path, so `docker run -v` sees them.
   # Mounts outside these roots are invisible to docker (lima-init/entrypoint.sh warns about them).
   - name: docker
@@ -52,7 +52,7 @@ services:
       - all
     net: host
     runtime:
-      mkdir: ["/run/dockersock", "/var/lib/docker", "/var/lib/lima-home", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+      mkdir: ["/run/dockersock", "/var/lib/docker", "/var/lib/lima-home", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
     devices:
       - path: /dev/kvm # nestedVirtualization: `docker run --device /dev/kvm`
         type: c
@@ -69,6 +69,7 @@ services:
       - /run/dockersock:/run/dockersock:rw,rbind # own dir: binding /var/run would shadow dind's containerd state
       - /var/lima-share/Users:/Users:rw,rbind,rslave
       - /var/lima-share/Volumes:/Volumes:rw,rbind,rslave
+      - /var/lima-share/mnt:/mnt:rw,rbind,rslave
       - /var/lib/lima-home:/home:rw,rbind,rslave
       - /tmp:/tmp:rw,rbind,rslave
       # written by the lima service: CA bundle (caCerts), Rosetta CDI spec + rosettad socket, ssh agent socket
@@ -76,7 +77,8 @@ services:
       - /var/lima-share/cdi:/etc/cdi
       - /var/lib/lima-rosettad:/var/cache/rosettad
       - /var/lima-share/host-services:/run/host-services
-    command: ["/usr/local/bin/docker-init", "--", "/usr/local/bin/dockerd", "--host=unix:///run/dockersock/docker.sock", "--group=999"]
+    # wait (up to 30s) for the CA bundle the lima service writes, so early pulls don't fail TLS
+    command: ["/bin/sh", "-c", "i=0; until [ -s /etc/ssl/certs/ca-certificates.crt ] || [ $i -ge 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/local/bin/docker-init -- /usr/local/bin/dockerd --host=unix:///run/dockersock/docker.sock --group=999"]
   # fstrim /var/lib/docker after image deletes so the disk image can shrink
   - name: trim-after-delete
     image: linuxkit/trim-after-delete:012784ce3bdd59d42799dbf6555fe6da972cc721
@@ -93,7 +95,7 @@ services:
     net: host
     rootfsPropagation: shared
     runtime:
-      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-root", "/var/lib/lima-usr-local", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
     devices:
       - path: all
         type: b # cidata + data disk block devices
@@ -112,6 +114,7 @@ services:
       - /run/dockersock:/run/dockersock:rw,rbind
       - /var/lima-share/Users:/Users:rw,rbind,rshared
       - /var/lima-share/Volumes:/Volumes:rw,rbind,rshared
+      - /var/lima-share/mnt:/mnt:rw,rbind,rshared # Lima's extra disks (/mnt/lima-*), Rosetta
       - /var/lib/lima-home:/home:rw,rbind,rshared
       - /tmp:/tmp:rw,rbind,rshared
       - /var/lima-share/ca:/run/lima-ca
@@ -119,6 +122,8 @@ services:
       - /var/lib/lima-rosettad:/var/cache/rosettad
       - /var/lima-share/host-services:/run/host-services
       - /var/lib/lima-ssh:/etc/ssh/keys # host keys survive reboots
+      - /var/lib/lima-root:/root # like /home: survives reboots
+      - /var/lib/lima-usr-local:/usr/local
       - /lib/modules:/lib/modules
       - /etc/resolv.conf:/etc/resolv.conf
       - /var/log:/var/log

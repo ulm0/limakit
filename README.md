@@ -49,14 +49,15 @@ LinuxKit's root filesystem is read-only and lives in RAM. Everything runs as con
 | `dhcpcd`, `acpid`, `ntpd`, `rngd`, `trim-after-delete` | LinuxKit packages. `acpid` gets a power-button action, so `limactl stop` shuts down cleanly. |
 
 Lima's mounts (virtiofs or reverse-sshfs) happen in the `lima` service. They propagate into dockerd's
-namespace through shared roots bound `rshared` → `rslave`, so `docker run -v ~/proj:/x` works.
+namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) bound `rshared` → `rslave`, so `docker run -v ~/proj:/x` works.
 
 ## Things to know
 
 - **The data disk must stay first** under `additionalDisks` in `lima.yaml`. LinuxKit formats it once if it's
-  blank (label `limakit-data`, `/dev/vdb`) and mounts it at `/var/lib`, where docker data, the guest `/home` and
-  the ssh host keys live. Add other disks after it; Lima formats those (`format`/`fsType` work).
-- **Docker only sees Lima mounts under `/Users`, `/Volumes`, `/home` and `/tmp`.** A mount elsewhere works in the
+  blank (label `limakit-data`, `/dev/vdb`) and mounts it at `/var/lib`, where docker data, the guest `/home`, `/root`, `/usr/local` and
+  the ssh host keys live. Add other disks after it; Lima formats those (`format`/`fsType` work). limakit also works around a Lima
+  bug that re-formats disks whose names don't fit the filesystem's label limit (ext4: 11 chars, xfs: 7).
+- **Docker only sees Lima mounts under `/Users`, `/Volumes`, `/mnt`, `/home` and `/tmp`.** A mount elsewhere works in the
   guest shell, but `docker run -v` sees an empty directory. The boot log warns about such mounts.
 - **Memory:** the whole image unpacks into RAM (~1 GiB), so the VM needs ≥ 4 GiB (`memory:` in `lima.yaml`).
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under

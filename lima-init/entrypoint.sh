@@ -35,6 +35,18 @@ UD=$LIMA_CIDATA_MNT/user-data
 while read -r line; do [ -n "$line" ] && export "$line"; done <"$LIMA_CIDATA_MNT/lima.env"
 yq() { "$LIMA_CIDATA_MNT/lima-guestagent" yq "$@"; } # cidata ships yq inside the guest agent
 
+# Lima formats additionalDisks with label lima-<name> and checks /dev/disk/by-label/lima-<name> next boot;
+# ext4 (16 bytes) and xfs (12) truncate long labels, so Lima would re-format such a disk on every boot.
+# Link the full name to the truncated label.
+for i in $(seq 0 $((${LIMA_CIDATA_DISKS:-0} - 1))); do
+	full=lima-$(eval echo "\$LIMA_CIDATA_DISK_${i}_NAME")
+	for short in "${full:0:16}" "${full:0:12}"; do
+		if [ ! -e "/dev/disk/by-label/$full" ] && [ -e "/dev/disk/by-label/$short" ]; then
+			ln -s "$(readlink "/dev/disk/by-label/$short")" "/dev/disk/by-label/$full"
+		fi
+	done
+done
+
 hostname "$(awk '/^local-hostname:/ {print $2}' "$LIMA_CIDATA_MNT/meta-data")"
 tz=$(yq -r '.timezone // ""' "$UD")
 if [ -n "$tz" ] && [ -e "/usr/share/zoneinfo/$tz" ]; then
@@ -81,6 +93,8 @@ if [ "$(yq -r '.ca_certs.remove_defaults // false' "$UD")" = true ]; then
 	: >/etc/ca-certificates.conf
 	rm -rf /usr/share/ca-certificates/*
 fi
+mkdir -p /usr/local/share/ca-certificates # /usr/local is on the data disk: drop certs from earlier boots
+rm -f /usr/local/share/ca-certificates/lima-*.crt
 n=$(yq '.ca_certs.trusted | length' "$UD")
 for i in $(seq 0 $((n - 1))); do yq -r ".ca_certs.trusted[$i]" "$UD" >"/usr/local/share/ca-certificates/lima-$i.crt"; done
 update-ca-certificates
@@ -99,7 +113,7 @@ awk '$1 !~ /^#/ && NF >= 3 {print $2}' /etc/fstab | while read -r m; do mkdir -p
 # dockerd only sees mounts under the shared roots (see the docker service in limakit.yml)
 for i in $(seq 0 $((${LIMA_CIDATA_MOUNTS:-0} - 1))); do
 	m=$(eval echo "\$LIMA_CIDATA_MOUNTS_${i}_MOUNTPOINT")
-	case "$m" in /Users/* | /Volumes/* | /home/* | /tmp/*) ;; *) echo "WARNING: mount $m is outside /Users, /Volumes, /home, /tmp; docker will not see it" ;; esac
+	case "$m" in /Users/* | /Volumes/* | /mnt/* | /home/* | /tmp/*) ;; *) echo "WARNING: mount $m is outside /Users, /Volumes, /mnt, /home, /tmp; docker will not see it" ;; esac
 done
 # Rosetta binfmt registration (vz rosetta.binfmt) and the guest agent's eBPF port ticker
 mountpoint -q /proc/sys/fs/binfmt_misc || mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || echo "WARNING: no binfmt_misc"
