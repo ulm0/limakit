@@ -1,0 +1,57 @@
+#!/bin/sh
+# Minimal OpenRC stand-in for the init scripts Lima's boot scripts write (lima-guestagent, rosettad, ...).
+# No runlevels or dependencies: just the fields those scripts use (command, command_args, command_user,
+# command_background, required_dirs/files, start_pre/start_post, output_log/error_log/log_file).
+#   rc-service [--ifstarted|--ifstopped|--ifnotstarted|--ifexists] <service> <start|stop|restart|reload|status>
+IF=""
+for a; do
+	case "$a" in
+	--ifstarted) IF=started ;;
+	--ifstopped | --ifnotstarted) IF=stopped ;;
+	--ifexists) ;;
+	*) set -- "$@" "$a" ;;
+	esac
+	shift
+done
+svc=$1 action=${2:-status}
+
+if [ "$svc" = sshd ]; then # boot scripts reload sshd after adding drop-ins
+	case "$action" in reload | restart) kill -HUP "$(cat /run/sshd.pid)" ;; esac
+	exit 0
+fi
+script=/etc/init.d/$svc
+[ -f "$script" ] || exit 0
+
+mkdir -p /run/rc-shim
+pidfile=/run/rc-shim/$svc.pid
+running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
+stop() {
+	running && kill "$(cat "$pidfile")"
+	rm -f "$pidfile"
+}
+start() (
+	set -a
+	RC_SVCNAME=$svc
+	[ -f "/etc/conf.d/$svc" ] && . "/etc/conf.d/$svc"
+	. "$script"
+	set +a
+	for d in ${required_dirs:-}; do [ -d "$d" ] || exit 1; done
+	for f in ${required_files:-}; do [ -e "$f" ] || exit 1; done
+	if command -v start_pre >/dev/null; then start_pre || exit 1; fi
+	out=${output_log:-${log_file:-/var/log/$svc.log}}
+	err=${error_log:-${err_file:-$out}}
+	run="$command $command_args"
+	[ -n "${command_user:-}" ] && run="su -s /bin/sh ${command_user%%:*} -c '$run'"
+	eval "nohup $run >>\"$out\" 2>>\"$err\" &"
+	echo $! >"$pidfile"
+	if command -v start_post >/dev/null; then start_post; fi
+)
+
+case "$IF:$action" in
+started:restart) if running; then stop; start; fi ;; # not running: skipped, still success (callers use set -e)
+stopped:start | :start) running || start ;;
+:restart) stop; start ;;
+:stop) stop ;;
+:reload) running && kill -HUP "$(cat "$pidfile")" ;;
+:status) running ;;
+esac

@@ -1,0 +1,3 @@
+#!/bin/sh
+# stub: Lima only tests for this file's existence (and sources init scripts that name it in the shebang)
+exit 0

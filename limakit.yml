@@ -1,0 +1,158 @@
+kernel:
+  # linuxkit/kernel 6.12.59 + kernel/limakit.config, built with `make kernel`
+  image: linuxkit/kernel:6.12.59-limakit
+  cmdline: "console=tty0 console=hvc0"
+init:
+  - linuxkit/init:1c3e4933ceabd7418b961d66d5d884bf0044ac64
+  - linuxkit/runc:9442aa234715e751a16144f1d4ae3fd1a00fd492
+  - linuxkit/containerd:eb5daf20704109ea58abb38d2b808e0c3a7e3717
+  - linuxkit/ca-certificates:256f1950df59f2f209e9f0b81374177409eb11de
+onboot:
+  - name: sysctl
+    image: linuxkit/sysctl:43ac1d39da329c3567fcb9689e5ca99de6d169b6
+    binds.add:
+      - /etc/sysctl.d/90-limakit.conf:/etc/sysctl.d/90-limakit.conf
+  - name: sysfs
+    image: linuxkit/sysfs:6d5bd933762f6b216744c711c6e876756cee9600
+  # the data disk: the FIRST Lima additionalDisk (vdb; see lima.yaml), formatted once if blank and mounted
+  # by label at /var/lib (docker data, guest /home, ssh host keys). Other additionalDisks are left to Lima.
+  - name: format
+    image: linuxkit/format:4f779c0b0d0ba145b7f03211b5cbf59fbbe12e54
+    command: ["/usr/bin/format", "-label", "limakit-data", "/dev/vdb"]
+  - name: mount
+    image: linuxkit/mount:bd1c3bb45e48e68e47a9456d1669f7119f855184
+    command: ["/usr/bin/mountie", "-label", "limakit-data", "/var/lib"]
+  # one-shot (-1) so the network is up before any service starts; service order is undefined
+  - name: dhcpcd
+    image: linuxkit/dhcpcd:b87e9ececac55a65eaa592f4dd8b4e0c3009afdb
+    command: ["/sbin/dhcpcd", "--nobackground", "-f", "/dhcpcd.conf", "-1", "--metric", "200"] # same route the dhcpcd service keeps
+services:
+  # keeps leases renewed and configures NICs added by Lima `networks:` (vzNAT, socket_vmnet) as eth1..
+  - name: dhcpcd
+    image: linuxkit/dhcpcd:b87e9ececac55a65eaa592f4dd8b4e0c3009afdb
+    binds.add:
+      - /etc/limakit/dhcpcd.conf:/dhcpcd.conf
+    command: ["/sbin/dhcpcd", "--nobackground", "-f", "/dhcpcd.conf"]
+  # limactl stop: VZ raises a GPIO-signaled ACPI power-button event (PL061, kernel/limakit.config);
+  # the image's busybox acpid runs /etc/acpi/PWRF/00000080 for it, which the image doesn't ship
+  - name: acpid
+    image: linuxkit/acpid:dbd30b25903bf17042c22171b729f94c4bd3d98d
+    binds.add:
+      - /etc/acpi/PWRF:/etc/acpi/PWRF
+  - name: rngd
+    image: linuxkit/rngd:984eb580ecb63986f07f626b61692a97aacd7198
+  - name: ntpd
+    image: linuxkit/openntpd:2508f1d040441457a0b3e75744878afdf61bc473
+  # Shared roots: Lima mounts (virtiofs/sshfs) are made in the lima service under these paths and
+  # propagate (rshared -> rslave) into dockerd's namespace at the same path, so `docker run -v` sees them.
+  # Mounts outside these roots are invisible to docker (lima-init/entrypoint.sh warns about them).
+  - name: docker
+    image: docker@sha256:2a232a42256f70d78e3cc5d2b5d6b3276710a0de0596c145f627ecfae90282ac # docker:28-dind
+    capabilities:
+      - all
+    net: host
+    runtime:
+      mkdir: ["/run/dockersock", "/var/lib/docker", "/var/lib/lima-home", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+    devices:
+      - path: /dev/kvm # nestedVirtualization: `docker run --device /dev/kvm`
+        type: c
+        major: 10
+        minor: 232
+        mode: "0666"
+    mounts:
+      - type: cgroup
+        options: ["rw","nosuid","noexec","nodev","relatime"]
+    binds:
+      - /etc/resolv.conf:/etc/resolv.conf
+      - /var/lib/docker:/var/lib/docker
+      - /lib/modules:/lib/modules
+      - /run/dockersock:/run/dockersock:rw,rbind # own dir: binding /var/run would shadow dind's containerd state
+      - /var/lima-share/Users:/Users:rw,rbind,rslave
+      - /var/lima-share/Volumes:/Volumes:rw,rbind,rslave
+      - /var/lib/lima-home:/home:rw,rbind,rslave
+      - /tmp:/tmp:rw,rbind,rslave
+      # written by the lima service: CA bundle (caCerts), Rosetta CDI spec + rosettad socket, ssh agent socket
+      - /var/lima-share/ca:/etc/ssl/certs:ro
+      - /var/lima-share/cdi:/etc/cdi
+      - /var/lib/lima-rosettad:/var/cache/rosettad
+      - /var/lima-share/host-services:/run/host-services
+    command: ["/usr/local/bin/docker-init", "--", "/usr/local/bin/dockerd", "--host=unix:///run/dockersock/docker.sock", "--group=999"]
+  # fstrim /var/lib/docker after image deletes so the disk image can shrink
+  - name: trim-after-delete
+    image: linuxkit/trim-after-delete:012784ce3bdd59d42799dbf6555fe6da972cc721
+    runtime:
+      mkdir: ["/run/dockersock"]
+    binds:
+      - /run/dockersock:/var/run:rw,rbind # package expects /var/run/docker.sock
+      - /var/lib/docker:/var/lib/docker
+  # sshd, lima-guestagent, Lima mounts and boot scripts (lima-init/entrypoint.sh)
+  - name: lima
+    image: limakit/lima:dev
+    capabilities:
+      - all # mounts, fuse, sshd privilege separation, useradd, provisioning scripts run as root
+    net: host
+    rootfsPropagation: shared
+    runtime:
+      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+    devices:
+      - path: all
+        type: b # cidata + data disk block devices
+      - path: all
+        type: c
+        major: 10 # misc: fuse (229), kvm (232), net/tun (200), vsock (dynamic)
+      - path: all
+        type: c
+        major: 116 # snd (audio.device)
+      - path: all
+        type: c
+        major: 4
+        minor: 1 # tty1 (video.display login prompt)
+    binds:
+      - /dev:/hostdev # only to copy device nodes; host /dev perms are 0660
+      - /run/dockersock:/run/dockersock:rw,rbind
+      - /var/lima-share/Users:/Users:rw,rbind,rshared
+      - /var/lima-share/Volumes:/Volumes:rw,rbind,rshared
+      - /var/lib/lima-home:/home:rw,rbind,rshared
+      - /tmp:/tmp:rw,rbind,rshared
+      - /var/lima-share/ca:/run/lima-ca
+      - /var/lima-share/cdi:/etc/cdi
+      - /var/lib/lima-rosettad:/var/cache/rosettad
+      - /var/lima-share/host-services:/run/host-services
+      - /var/lib/lima-ssh:/etc/ssh/keys # host keys survive reboots
+      - /lib/modules:/lib/modules
+      - /etc/resolv.conf:/etc/resolv.conf
+      - /var/log:/var/log
+files:
+  - path: etc/acpi/PWRF/00000080
+    mode: "0755"
+    contents: |
+      #!/bin/sh
+      exec /sbin/poweroff
+  # Lima's route metrics (eth0 200, extra networks 100, so vzNAT/vmnet become the default route);
+  # resolv.conf is owned by the onboot dhcpcd + lima service, not the renewing one
+  - path: etc/limakit/dhcpcd.conf
+    mode: "0644"
+    contents: |
+      allowinterfaces eth* lima* # Lima's bootcmd renames networks: NICs to lima0..
+      hostname
+      clientid
+      persistent
+      option rapid_commit
+      option domain_name_servers, domain_name, domain_search, host_name
+      option classless_static_routes
+      option ntp_servers
+      option interface_mtu
+      require dhcp_server_identifier
+      slaac private
+      nodelay
+      noarp
+      nohook resolv.conf
+      metric 100
+      interface eth0
+      metric 200
+  # loose reverse-path filtering: with a second NIC (Lima networks:) strict mode drops its traffic
+  - path: etc/sysctl.d/90-limakit.conf
+    mode: "0644"
+    contents: |
+      net.ipv4.conf.all.rp_filter = 2
+      net.ipv4.conf.default.rp_filter = 2

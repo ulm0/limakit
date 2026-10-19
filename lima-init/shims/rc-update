@@ -1,0 +1,3 @@
+#!/bin/sh
+# no-op: there is no runlevel; entrypoint.sh starts everything
+exit 0

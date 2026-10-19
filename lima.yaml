@@ -1,0 +1,20 @@
+minimumLimaVersion: 2.0.0
+base:
+  - template:_default/mounts # ~ read-only, /tmp/lima writable
+vmType: vz
+arch: aarch64
+mountType: virtiofs # needs the custom kernel (CONFIG_VIRTIO_FS=y)
+images:
+  - location: ./out/limakit-efi.img
+    arch: aarch64
+additionalDisks:
+  # must stay FIRST: LinuxKit formats/mounts /dev/vdb as the data disk (limakit.yml); add others after it
+  - name: limakit-docker # limactl disk create limakit-docker --size 50GiB
+    format: false # LinuxKit's format/mount own it; without udev Lima's 05-lima-disks.sh would re-format it every boot
+containerd:
+  system: false
+  user: false
+portForwards:
+  - guestSocket: /var/run/docker.sock
+    hostSocket: "{{.Dir}}/sock/docker.sock"
+memory: 4GiB # image unpacks to ~1GiB in RAM (initramfs)
