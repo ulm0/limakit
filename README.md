@@ -141,7 +141,7 @@ The resulting full config is kept in `kernel/config-aarch64` for review.
 To move to another kernel, build it, then set `kernel.image` in `limakit.yml`:
 
 ```sh
-make kernel KERNEL_VERSION=6.12.60
+make kernel KERNEL_VERSION=6.18.58
 ```
 
 For a series LinuxKit doesn't package yet (e.g. 7.x), the script borrows LinuxKit's newest series

@@ -2,14 +2,14 @@
 # Build linuxkit/kernel:<version>-limakit (arm64) from LinuxKit's kernel packaging + kernel/limakit.config
 # (a complete option list over allnoconfig; LinuxKit's own config is not used).
 #
-#   kernel/build.sh [KERNEL_VERSION]        e.g. kernel/build.sh 6.12.59
+#   kernel/build.sh [KERNEL_VERSION]        e.g. kernel/build.sh 6.18.57
 #
 # A version whose series LinuxKit doesn't package yet (e.g. 7.2.11) borrows the newest series' packaging
 # (Dockerfile, build-args); olddefconfig gives new options their defaults. Review kernel/config-aarch64 after that.
 # Needs docker. DOCKER_HOST should point at a daemon with >=6 CPUs/8GiB; the build takes ~25 min.
 set -eu
 
-KERNEL_VERSION=${1:-6.12.59}
+KERNEL_VERSION=${1:-6.18.57}
 LINUXKIT_REF=${LINUXKIT_REF:-f3906d1f6650f79d74adf3cba42b04ca9e21ea7d} # linuxkit/linuxkit master, 2026-10-15
 LINUXKIT=$(cd "$(dirname "${LINUXKIT:-bin/linuxkit}")" && pwd)/$(basename "${LINUXKIT:-bin/linuxkit}")
 SERIES=$(echo "$KERNEL_VERSION" | cut -d. -f1-2).x
