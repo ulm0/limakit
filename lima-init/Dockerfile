@@ -6,11 +6,13 @@ RUN apk add --no-cache openssh-server openssh-sftp-server bash zsh sudo shadow s
       sshfs fuse3 rsync socat iproute2 curl ca-certificates tzdata xauth python3 \
       e2fsprogs e2fsprogs-extra xfsprogs xfsprogs-extra btrfs-progs \
       containerd runc nerdctl buildkit buildctl cni-plugins rootlesskit slirp4netns \
+      docker-engine docker-rootless-extras \
  && rm -f /etc/alpine-release /etc/motd \
  && mkdir -p /etc/conf.d /etc/init.d
 # python3: provision mode ansible; e2fsprogs/xfsprogs/btrfs-progs: additionalDisks format/fsType;
 # socat: ssh over vsock; shadow-uidmap: rootless engines
 # containerd..slirp4netns: containerd.system/user (entrypoint.sh starts them; Lima's own install needs systemd)
+# docker-engine + docker-rootless-extras: rootless dockerd (env LIMAKIT_DOCKER_ROOTLESS); the rootful one is the docker service
 # containerd-rootless.sh: rootless containerd under RootlessKit; Alpine's nerdctl doesn't ship it. Matches nerdctl's version.
 ADD --chmod=755 --checksum=sha256:1f8101ce7680ce4533ced18b4e3e39bd300c08210c336d30f6969c8cb1727a7c \
     https://raw.githubusercontent.com/containerd/nerdctl/v2.2.1/extras/rootless/containerd-rootless.sh /usr/bin/containerd-rootless.sh

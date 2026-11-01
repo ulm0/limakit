@@ -82,6 +82,23 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
   sees every Lima mount. `nerdctl` (and `nerdctl.lima` on the Mac) talks to the rootless daemon
   (`containerd.user`), `sudo nerdctl` to the rootful one (`containerd.system`). Both run next to Docker.
   A `systemctl` stub exists only to pass Lima's start-up check; there is no systemd.
+- **Rootless Docker is off by default; `env: {LIMAKIT_DOCKER_ROOTLESS: "true"}` in `lima.yaml` turns it on.**
+  Lima has no setting for it (its `docker` template sets it up with systemd), and it rejects a `param:` that no
+  script uses, so limakit reads `env:`. Alpine's `dockerd-rootless` runs as the Lima user in the `lima`
+  container. `docker` in the guest shell talks to it, and files that container root writes to mounts are
+  owned by you. `sudo docker` still reaches the rootful daemon. To use it from the Mac, forward its socket:
+
+  ```yaml
+  env:
+    LIMAKIT_DOCKER_ROOTLESS: "true"
+  portForwards:
+    - guestSocket: "/run/user/{{.UID}}/docker.sock"
+      hostSocket: "{{.Dir}}/sock/docker-rootless.sock"
+  ```
+
+  It has no memory/CPU limits: rootless dockerd uses cgroups only through systemd, so `-m`/`--cpus` only
+  print a warning. It doesn't start alongside `containerd.user`, because `dockerd-rootless` refuses to run
+  next to `containerd-rootless.sh`; the boot log warns.
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under
   `/var/lib` or the shared roots.
 
@@ -93,6 +110,7 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
   - docker: container memory/CPU limits, IPv6 networks
   - containerd: `containerd.system` and `containerd.user` (nerdctl, `nerdctl.lima`, `nerdctl build`,
     port forwarding, mounts, memory/CPU limits)
+  - rootless Docker (`LIMAKIT_DOCKER_ROOTLESS`): run, build, mounts, port forwarding, the socket on the host
   - Kubernetes in docker: k3s, k3d with flannel (default) or Cilium (BTF, tc BPF, VXLAN/GENEVE in the kernel)
   - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
   - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
@@ -118,8 +136,8 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 
 ## Testing and CI
 
-`test/run.sh` boots a throwaway `limakit-test` instance twice (virtiofs + vzNAT, then reverse-sshfs +
-user-v2 with `containerd.system` and `containerd.user`) and checks every
+`test/run.sh` boots a throwaway `limakit-test` instance three times (virtiofs + vzNAT; reverse-sshfs +
+user-v2 with `containerd.system` and `containerd.user`; rootless Docker) and checks every
 feature above. Checks the host can't run are skipped: no Rosetta, a chip without nested virtualization, or
 no `ansible-playbook`.
 
