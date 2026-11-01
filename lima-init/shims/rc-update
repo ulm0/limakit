@@ -1,3 +1,9 @@
 #!/bin/sh
-# no-op: there is no runlevel; entrypoint.sh starts everything
+# No runlevels: `rc-update add <svc> [level]` records the service in /etc/runlevels/<level> (on the data disk),
+# and entrypoint.sh starts what's recorded on every boot. Everything else is a no-op.
+#   rc-update add|del <service> [runlevel]
+case "$1" in
+add) mkdir -p "/etc/runlevels/${3:-default}" && ln -sf "/etc/init.d/$2" "/etc/runlevels/${3:-default}/$2" ;;
+del | delete) rm -f "/etc/runlevels/${3:-default}/$2" ;;
+esac
 exit 0
