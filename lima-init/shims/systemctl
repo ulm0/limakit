@@ -1,0 +1,6 @@
+#!/bin/sh
+# Not systemd. With containerd.system/user, Lima's hostagent requires `command -v systemctl` before it
+# reports the instance ready; entrypoint.sh links this in only after Lima's boot scripts ran, so they keep
+# their non-systemd paths. limakit runs containerd/buildkitd itself (entrypoint.sh).
+echo "systemctl: limakit has no systemd" >&2
+exit 1

@@ -76,6 +76,12 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
   xfs: 7).
 - **Docker only sees Lima mounts under `/Users`, `/Volumes`, `/mnt`, `/home` and `/tmp`.** A mount elsewhere works in the
   guest shell, but `docker run -v` sees an empty directory. The boot log warns about such mounts.
+- **containerd is off by default; `containerd.system` and `containerd.user` in `lima.yaml` turn it on.**
+  limakit doesn't use Lima's install, which unpacks nerdctl-full and needs systemd. It runs Alpine's
+  containerd, buildkitd and nerdctl from the `lima` image, in the `lima` container, so `nerdctl run -v`
+  sees every Lima mount. `nerdctl` (and `nerdctl.lima` on the Mac) talks to the rootless daemon
+  (`containerd.user`), `sudo nerdctl` to the rootful one (`containerd.system`). Both run next to Docker.
+  A `systemctl` stub exists only to pass Lima's start-up check; there is no systemd.
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under
   `/var/lib` or the shared roots.
 
@@ -85,6 +91,8 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 
 - **Works:**
   - docker: container memory/CPU limits, IPv6 networks
+  - containerd: `containerd.system` and `containerd.user` (nerdctl, `nerdctl.lima`, `nerdctl build`,
+    port forwarding, mounts, memory/CPU limits)
   - Kubernetes in docker: k3s, k3d with flannel (default) or Cilium (BTF, tc BPF, VXLAN/GENEVE in the kernel)
   - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
   - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
@@ -104,15 +112,16 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 - **Not supported:** `video.display` (a console window on the Mac): the kernel has no GPU or USB input.
 - **Left out on purpose:** `audio` (the guest gets no sound device access).
 - **Not supported:**
-  - Lima's built-in containerd (`containerd.system`/`user`, so `nerdctl.lima` too) and templates that need
-    systemd (k8s, k0s, podman, faasd). Lima requires `systemctl` for these.
+  - Templates that need systemd (k8s, k0s, podman, faasd).
+  - stargz-snapshotter and bypass4netns for containerd.
   - Snapshots and TPM, which Lima's vz driver doesn't implement.
 
 ## Testing and CI
 
 `test/run.sh` boots a throwaway `limakit-test` instance twice (virtiofs + vzNAT, then reverse-sshfs +
-user-v2) and checks every feature above. Checks the host can't run are skipped: no Rosetta, a chip without
-nested virtualization, or no `ansible-playbook`.
+user-v2 with `containerd.system` and `containerd.user`) and checks every
+feature above. Checks the host can't run are skipped: no Rosetta, a chip without nested virtualization, or
+no `ansible-playbook`.
 
 `.github/workflows/build.yml` builds on GitHub's arm64 runners (`ubuntu-24.04-arm`) and publishes to
 `ghcr.io/<owner>/limakit/`:

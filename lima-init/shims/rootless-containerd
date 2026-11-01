@@ -1,0 +1,7 @@
+#!/bin/sh
+# containerd.user: containerd-rootless.sh execs `containerd` in RootlessKit's child (user + mount namespace);
+# entrypoint.sh puts this first in its PATH. Showing the cgroup delegated to the user (LIMAKIT_CGROUP) as
+# /sys/fs/cgroup puts containerd's /<namespace>/<id> container cgroups inside it, so memory/CPU limits work
+# without systemd's Delegate=yes.
+mount --bind "$LIMAKIT_CGROUP" /sys/fs/cgroup
+exec /usr/bin/containerd "$@"
