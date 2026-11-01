@@ -110,13 +110,16 @@ services:
     net: host
     rootfsPropagation: shared
     runtime:
-      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-root", "/var/lib/lima-usr-local", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-root", "/var/lib/lima-usr-local", "/var/lib/lima-containerd/containerd", "/var/lib/lima-containerd/buildkit", "/var/lib/lima-containerd/nerdctl", "/var/lib/lima-containerd/cni", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
     devices:
       - path: all
         type: b # cidata + data disk block devices
       - path: all
         type: c
         major: 10 # misc: fuse (229), kvm (232), net/tun (200), vsock (dynamic)
+    mounts: # rw cgroup2: containerd.system/user containers (the default mount is read-only)
+      - type: cgroup
+        options: ["rw","nosuid","noexec","nodev","relatime"]
     binds:
       - /dev:/hostdev # only to copy device nodes; host /dev perms are 0660
       - /run/dockersock:/run/dockersock:rw,rbind
@@ -132,6 +135,11 @@ services:
       - /var/lib/lima-ssh:/etc/ssh/keys # host keys survive reboots
       - /var/lib/lima-root:/root # like /home: survives reboots
       - /var/lib/lima-usr-local:/usr/local
+      # containerd.system's state (lima-init/entrypoint.sh); containerd.user's lives in ~/.local/share
+      - /var/lib/lima-containerd/containerd:/var/lib/containerd
+      - /var/lib/lima-containerd/buildkit:/var/lib/buildkit
+      - /var/lib/lima-containerd/nerdctl:/var/lib/nerdctl
+      - /var/lib/lima-containerd/cni:/var/lib/cni
       - /lib/modules:/lib/modules
       - /etc/resolv.conf:/etc/resolv.conf
       - /var/log:/var/log

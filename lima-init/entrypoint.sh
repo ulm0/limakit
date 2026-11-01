@@ -14,7 +14,7 @@ export LIMA_CIDATA_MNT=/mnt/lima-cidata
 for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control; do
 	[ -e "$d" ] && [ ! -e "/dev/${d##*/}" ] && cp -a "$d" /dev/ || true
 done
-[ -e /hostdev/net/tun ] && mkdir -p /dev/net && cp -a /hostdev/net/tun /dev/net/
+[ -e /hostdev/net/tun ] && mkdir -p /dev/net && cp -a /hostdev/net/tun /dev/net/ && chmod 666 /dev/net/tun # slirp4netns, as the user
 chmod 666 /dev/fuse
 # no udev: pre-create partition nodes (virtio-blk: 16 minors per disk) so partitions Lima's
 # 05-lima-disks.sh creates later are usable here, and give it /dev/disk/by-label to detect formatted disks
@@ -148,11 +148,63 @@ grep -q '^Include' /etc/ssh/sshd_config || sed -i '1i Include /etc/ssh/sshd_conf
 
 ln -sf /run/dockersock/docker.sock /var/run/docker.sock # docker CLI default path; dockerd is the docker service
 
+# containerd.system / containerd.user (lima.yaml): limakit's own containerd + buildkitd, from the image.
+# Lima's boot.Linux/40-install-containerd.sh (nerdctl-full into /usr/local, systemd units) needs systemd
+# and skips itself. Started before boot.sh so provisioning scripts can use nerdctl, as on Lima.
+supervise() { # supervise <log> <cmd...>: no init system here, so restart the daemon if it exits
+	local log=$1
+	shift
+	(while :; do
+		"$@" >>"$log" 2>&1 || true
+		echo "limakit: $1 exited, restarting in 2s" >>"$log"
+		sleep 2
+	done) &
+}
+if [ "${LIMA_CIDATA_CONTAINERD_SYSTEM:-}" = 1 ]; then
+	# rootful: /var/lib/{containerd,buildkit,nerdctl,cni} are on the data disk (limakit.yml)
+	supervise /var/log/containerd.log containerd
+	supervise /var/log/buildkitd.log buildkitd --addr=unix:///run/buildkit/buildkitd.sock \
+		--oci-worker=false --containerd-worker=true --containerd-worker-namespace=default
+fi
+if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
+	# rootless, as Lima's 20-rootless-base.sh sets it up: subuid ranges, unprivileged ports and ping
+	for f in /etc/subuid /etc/subgid; do
+		b=524288
+		[ "$LIMA_CIDATA_UID" -ge "$b" ] && b=$((LIMA_CIDATA_UID + 1))
+		grep -qw "^$LIMA_CIDATA_USER" "$f" 2>/dev/null || echo "$LIMA_CIDATA_USER:$b:1073741824" >>"$f"
+	done
+	sysctl -qw net.ipv4.ip_unprivileged_port_start=0 net.ipv4.ping_group_range="0 2147483647"
+	asuser() { setpriv --reuid="$LIMA_CIDATA_UID" --regid="$gid" --init-groups \
+		env -i HOME="$home" USER="$LIMA_CIDATA_USER" PATH=/usr/sbin:/usr/bin:/sbin:/bin XDG_RUNTIME_DIR="/run/user/$LIMA_CIDATA_UID" "$@"; }
+	rl=/run/user/$LIMA_CIDATA_UID
+	# memory/CPU limits: a cgroup delegated to the user (Lima gets one from systemd's Delegate=yes). The
+	# daemons run in its daemon/ leaf; containerd sees the whole cgroup as /sys/fs/cgroup (shims/rootless-containerd)
+	cg=/sys/fs/cgroup/containerd-user
+	mkdir -p "$cg/daemon"
+	chown -R "$LIMA_CIDATA_UID" "$cg"
+	incg() { echo "$BASHPID" >"$cg/daemon/cgroup.procs" && "$@"; }
+	# nerdctl picks cgroup manager "none" for rootless without systemd; keep a user's own config
+	t=$home/.config/nerdctl/nerdctl.toml
+	[ -e "$t" ] || asuser sh -c "mkdir -p ${t%/*} && echo 'cgroup_manager = \"cgroupfs\" # limakit: no systemd' >$t"
+	supervise /var/log/containerd-user.log incg asuser LIMAKIT_CGROUP="$cg" \
+		PATH=/usr/libexec/limakit/rootless:/usr/sbin:/usr/bin:/sbin:/bin containerd-rootless.sh
+	# buildkitd joins RootlessKit's user + mount namespaces, as containerd-rootless-setuptool.sh's buildkit unit
+	# does; not its netns: with --detach-netns the child stays in the host's, which the user can't join
+	# shortcut: buildkitd stays in the old namespaces if containerd-rootless.sh restarts; restart it then too if that matters
+	supervise /var/log/buildkitd-user.log incg asuser sh -c "until [ -S $rl/containerd/containerd.sock ]; do sleep 1; done
+		exec nsenter --no-fork --preserve-credentials -m -U -t \$(cat $rl/containerd-rootless/child_pid) -- \
+			buildkitd --addr=unix://$rl/buildkit-default/buildkitd.sock --root=$home/.local/share/buildkit-default \
+			--oci-worker=false --containerd-worker=true --containerd-worker-namespace=default"
+fi
+
 # cloud-init bootcmd (Lima's own snippets and `provision: mode: boot` scripts), then Lima's boot scripts
 for i in $(seq 0 $(($(yq '.bootcmd | length' "$UD") - 1))); do
 	yq -r ".bootcmd[$i]" "$UD" | sh || echo "WARNING: bootcmd[$i] failed"
 done
 "$LIMA_CIDATA_MNT/boot.sh" || true
+# after boot.sh, so Lima's boot scripts don't take their systemd paths (lima-init/shims/systemctl)
+[ "${LIMA_CIDATA_CONTAINERD_SYSTEM:-}" = 1 ] || [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ] &&
+	ln -sf /usr/libexec/limakit/systemctl /usr/bin/systemctl
 echo "Cloud-init v. limakit finished at $(date)"
 
 # PID 1 must handle TERM (bare `sleep` ignores it); unmount Lima's fuse/virtiofs mounts on the way down

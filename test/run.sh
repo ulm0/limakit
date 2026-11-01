@@ -8,6 +8,7 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 ROOT=$PWD
 I=limakit-test
+L=${LIMA_HOME:-$HOME/.lima}/$I # instance dir
 T=$(mktemp -d)
 SHARE=/tmp/limakit-test-share # writable mount; under /tmp so the mountPoint can match
 FAILS=0
@@ -113,7 +114,7 @@ check "guest agent running" g 'pgrep lima-guestagent'
 check "data on the instance disk (loop0 after the squashfs)" g 'mount | grep -q "^/dev/loop0 on /home "'
 check "sysctls applied (LinuxKit's + limakit's)" g '[ "$(cat /proc/sys/kernel/kptr_restrict /proc/sys/net/ipv4/conf/all/rp_filter | tr "\\n" " ")" = "2 2 " ]'
 check "guest agent eBPF port ticker" g 'sudo grep -q "eBPF ticker" /var/log/lima-guestagent.log'
-check "ssh over vsock" grep -q "listening on the vsock port" ~/.lima/$I/ha.stderr.log
+check "ssh over vsock" grep -q "listening on the vsock port" "$L/ha.stderr.log"
 check "virtiofs ~ (ro)" g "mount | grep -q 'on $HOME type virtiofs (ro'"
 check "docker -v on ~" g "docker run --rm -v $HOME:/x alpine ls /x/Documents"
 g 'docker run --rm -v /tmp/lima:/t alpine sh -c "echo w > /t/from-container"'
@@ -121,8 +122,8 @@ check "writable mount: container write reaches host" grep -qx w "$SHARE/from-con
 g 'docker run -d --name tcp -p 18080:80 nginx:alpine; docker run -d --name udp -p 15300:5300/udp alpine sh -c "apk add -q socat && socat UDP-RECVFROM:5300,fork EXEC:\"echo pong\""' >/dev/null
 check "TCP port forward" port_fwd 18080 tcp
 check "UDP port forward" port_fwd 15300 udp
-check "dhcpcd port 68 not forwarded" sh -c "! grep -q 'Forwarding UDP from 0.0.0.0:68' ~/.lima/$I/ha.stderr.log"
-check "docker socket on host" env DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker ps
+check "dhcpcd port 68 not forwarded" sh -c "! grep -q 'Forwarding UDP from 0.0.0.0:68' '$L/ha.stderr.log'"
+check "docker socket on host" env DOCKER_HOST="unix://$L/sock/docker.sock" docker ps
 echo x >"$T/cp" && check "limactl cp" sh -c "limactl cp '$T/cp' $I:/tmp/cp 2>/dev/null && [ \"\$(limactl shell $I cat /tmp/cp 2>/dev/null)\" = x ]"
 check "provision system + param" grep -qx "system hello-param" "$SHARE/prov-system"
 check "provision user (XDG_RUNTIME_DIR)" grep -q "^user /run/user/" "$SHARE/prov-user"
@@ -142,11 +143,11 @@ check "docker IPv6 network" g 'docker network create --ipv6 v6test && docker run
 K3S=rancher/k3s:v1.37.1-k3s1 CILIUM=1.20.3
 k3d_up() { # k3d_up <cluster> [k3d args]
 	local c=$1; shift
-	DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d cluster create "$c" --image "$K3S" --timeout 300s \
+	DOCKER_HOST="unix://$L/sock/docker.sock" k3d cluster create "$c" --image "$K3S" --timeout 300s \
 		--kubeconfig-update-default=false --kubeconfig-switch-context=false "$@" >>"$T/k3d.log" 2>&1 &&
-		DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d kubeconfig get "$c" >"$T/$c.kubeconfig"
+		DOCKER_HOST="unix://$L/sock/docker.sock" k3d kubeconfig get "$c" >"$T/$c.kubeconfig"
 }
-k3d_down() { DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock k3d cluster delete "$1" >>"$T/k3d.log" 2>&1; }
+k3d_down() { DOCKER_HOST="unix://$L/sock/docker.sock" k3d cluster delete "$1" >>"$T/k3d.log" 2>&1; }
 k8s_smoke() { # k8s_smoke <cluster>: nodes Ready, a pod reachable through a Service by name (CNI + DNS + kube-proxy)
 	local k=(kubectl --kubeconfig "$T/$1.kubeconfig")
 	"${k[@]}" wait node --all --for=condition=Ready --timeout=300s &&
@@ -156,17 +157,19 @@ k8s_smoke() { # k8s_smoke <cluster>: nodes Ready, a pod reachable through a Serv
 }
 cilium_up() { # cilium_up <cluster>: bpffs + cgroup2 (shared) in each node, then the chart
 	local n
-	for n in $(DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker ps --filter "name=k3d-$1-(server|agent)" --format '{{.Names}}'); do
-		DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock docker exec "$n" sh -c 'mount bpffs /sys/fs/bpf -t bpf && mount --make-shared /sys/fs/bpf && mkdir -p /run/cilium/cgroupv2 && mount -t cgroup2 none /run/cilium/cgroupv2 && mount --make-shared /run/cilium/cgroupv2' || return 1
+	for n in $(DOCKER_HOST="unix://$L/sock/docker.sock" docker ps --filter "name=k3d-$1-(server|agent)" --format '{{.Names}}'); do
+		DOCKER_HOST="unix://$L/sock/docker.sock" docker exec "$n" sh -c 'mount bpffs /sys/fs/bpf -t bpf && mount --make-shared /sys/fs/bpf && mkdir -p /run/cilium/cgroupv2 && mount -t cgroup2 none /run/cilium/cgroupv2 && mount --make-shared /run/cilium/cgroupv2' || return 1
 	done
-	helm install cilium cilium --repo https://helm.cilium.io --version "$CILIUM" --namespace kube-system \
+	# own repo config/cache: helm --repo trips over the host's repos when one has no cached index
+	HELM_REPOSITORY_CONFIG="$T/helm-repos.yaml" HELM_REPOSITORY_CACHE="$T/helm-cache" \
+		helm install cilium cilium --repo https://helm.cilium.io --version "$CILIUM" --namespace kube-system \
 		--kubeconfig "$T/$1.kubeconfig" --set operator.replicas=1 --set ipam.mode=kubernetes \
 		--set cgroup.autoMount.enabled=false --set cgroup.hostRoot=/run/cilium/cgroupv2 --wait --timeout 10m >>"$T/k3d.log" 2>&1
 }
 if command -v k3d >/dev/null && command -v kubectl >/dev/null; then
 	if k3d_up lk-flannel; then
 		check "k3d + flannel: pod reachable through a Service" k8s_smoke lk-flannel
-		check "k3d image import" env DOCKER_HOST=unix://$HOME/.lima/$I/sock/docker.sock sh -c "docker pull -q busybox >/dev/null && k3d image import busybox -c lk-flannel"
+		check "k3d image import" env DOCKER_HOST="unix://$L/sock/docker.sock" sh -c "docker pull -q busybox >/dev/null && k3d image import busybox -c lk-flannel"
 	else fail "k3d + flannel: cluster create"; tail -n 15 "$T/k3d.log"; fi
 	k3d_down lk-flannel
 	if ! command -v helm >/dev/null; then skip "k3d + Cilium (no helm)"
@@ -177,7 +180,7 @@ if command -v k3d >/dev/null && command -v kubectl >/dev/null; then
 else skip "k3d (no k3d/kubectl on host)"; fi
 check "vzNAT: lima0 default route metric 100" g 'ip route | grep -q "default via .* dev lima0 .* metric 100"'
 check "ssh agent forwarding" g '[ -S "$SSH_AUTH_SOCK" ]'
-check "X11 forwarding (guest side)" sh -c "DISPLAY=:0 ssh -F ~/.lima/$I/ssh.config -o ControlMaster=no -o ControlPath=none -Y lima-$I 'echo \$DISPLAY' 2>/dev/null | grep -q localhost:"
+check "X11 forwarding (guest side)" sh -c "DISPLAY=:0 ssh -F '$L/ssh.config' -o ControlMaster=no -o ControlPath=none -Y lima-$I 'echo \$DISPLAY' 2>/dev/null | grep -q localhost:"
 check "btrfs additionalDisk" g 'mount | grep -q "/mnt/lima-'$I'-extra type btrfs"'
 check "extra disk visible to docker (/mnt)" g "echo keep | sudo tee /mnt/lima-$I-extra/keep >/dev/null && docker run --rm -v /mnt/lima-$I-extra:/d alpine cat /d/keep"
 if [ "${NESTED:-}" ]; then check "nested virtualization (/dev/kvm in a container)" g 'docker run --rm --device /dev/kvm alpine test -c /dev/kvm'; else skip "nested virtualization (needs M3+)"; fi
@@ -195,7 +198,8 @@ check "persists across reboot: ssh host key" g "[ \"\$(ssh-keygen -lf /etc/ssh/k
 check "persists across reboot: extra disk not re-formatted" g "sudo cat /mnt/lima-$I-extra/keep"
 
 echo "== boot 2: reverse-sshfs, user-v2"
-config reverse-sshfs "networks: [{lima: user-v2}]" >"$T/b.yaml"
+# + containerd.system and containerd.user (limakit's own daemons, lima-init/entrypoint.sh)
+config reverse-sshfs "networks: [{lima: user-v2}]" | sed -e 's/^  system: false$/  system: true/' -e 's/^  user: false$/  user: true/' >"$T/b.yaml"
 if start "$T/b.yaml"; then
 	pass "boot (non-plain READY)"
 	check "reverse-sshfs mounts" g 'mount | grep -q "on /tmp/lima type fuse.sshfs"'
@@ -203,6 +207,19 @@ if start "$T/b.yaml"; then
 	check "reverse-sshfs: container write reaches host" grep -qx s "$SHARE/from-sshfs"
 	check "user-v2 network names" g 'getent hosts lima-'$I'.internal'
 	check "host.lima.internal from a container" g 'docker run --rm alpine getent hosts host.lima.internal'
+	check ".local (mDNS) via hostResolver" g "getent hosts '$(scutil --get LocalHostName).local'"
+	printf 'FROM alpine\nRUN echo built >/b\n' >"$SHARE/Dockerfile"
+	for m in user system; do # nerdctl as the user is rootless (containerd.user); sudo nerdctl is containerd.system
+		n=nerdctl p=18081
+		[ $m = system ] && n="sudo nerdctl" p=18082
+		check "containerd.$m: nerdctl run" g "$n run --rm alpine true"
+		g "$n run --rm -v /tmp/lima:/t alpine sh -c 'echo $m >/t/from-$m'"
+		check "containerd.$m: container write reaches host" grep -qx $m "$SHARE/from-$m"
+		check "containerd.$m: nerdctl build (buildkitd)" g "$n build -q -t limakit-b /tmp/lima && [ \"\$($n run --rm limakit-b cat /b)\" = built ]"
+		g "$n run -d --name web -p $p:80 nginx:alpine" >/dev/null
+		check "containerd.$m: port forward" port_fwd $p tcp
+		check "containerd.$m: memory/cpu limits" g "[ \"\$($n run --rm -m 64m --cpus 0.5 alpine cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max | tr '\n' ' ')\" = '67108864 50000 100000 ' ]"
+	done
 else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
 
 echo
