@@ -203,6 +203,7 @@ if start "$T/b.yaml"; then
 	check "reverse-sshfs: container write reaches host" grep -qx s "$SHARE/from-sshfs"
 	check "user-v2 network names" g 'getent hosts lima-'$I'.internal'
 	check "host.lima.internal from a container" g 'docker run --rm alpine getent hosts host.lima.internal'
+	check ".local (mDNS) via hostResolver" g "getent hosts '$(scutil --get LocalHostName).local'"
 else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
 
 echo

@@ -91,7 +91,8 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
   - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `ansible`, `param`, probes
   - `additionalDisks`, including `fsType: btrfs`; discard/trim reaches the host disk file
   - networking: `networks: vzNAT`, `networks: lima: user-v2` (incl. `lima-<name>.internal`), `dns:`,
-    `host.lima.internal` (also from containers)
+    `host.lima.internal` (also from containers), `.local` (mDNS) lookups through `hostResolver` (the Mac's
+    resolver answers them; not with `hostResolver.enabled: false` or `dns:`)
   - host integration: `caCerts`, timezone, `env:`, `ssh.forwardAgent`, SSH over vsock
   - VM features: Rosetta (binfmt plus the `rosettad` cache via CDI: `--device lima-vm.io/rosetta=cached`),
     `nestedVirtualization`
@@ -106,7 +107,6 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
   - Lima's built-in containerd (`containerd.system`/`user`, so `nerdctl.lima` too) and templates that need
     systemd (k8s, k0s, podman, faasd). Lima requires `systemctl` for these.
   - Snapshots and TPM, which Lima's vz driver doesn't implement.
-  - `mdns` (Lima only supports it via systemd-resolved).
 
 ## Testing and CI
 
