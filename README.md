@@ -59,7 +59,7 @@ containerd services:
 
 | Service | Role |
 |---|---|
-| `lima` (`lima-init/`) | Alpine container that does cloud-init's job: reads Lima's cidata ISO, creates the user and keys, writes `/etc/fstab`, sets timezone, CA certs and DNS, and runs `bootcmd`. It then starts sshd and runs Lima's own `boot.sh`. `shims/` are a minimal OpenRC stand-in, so Lima installs and starts `lima-guestagent` (and `rosettad`) the OpenRC way. |
+| `lima` (`lima-init/`) | Alpine container that does cloud-init's job: reads Lima's cidata ISO, creates the user and keys, writes `/etc/fstab`, sets timezone, CA certs and DNS, and runs `bootcmd`. It then starts sshd and runs Lima's own `boot.sh`. `shims/` are a minimal OpenRC stand-in, so Lima installs and starts `lima-guestagent` (and `rosettad`) the OpenRC way, and so does the k3s installer. |
 | `docker` | `docker:29-dind`, pinned by digest. Socket at `/run/dockersock/docker.sock`. |
 | `dhcpcd`, `acpid`, `ntpd`, `rngd`, `trim-after-delete` | LinuxKit packages. `acpid` gets a power-button action, so `limactl stop` shuts down cleanly. |
 
@@ -99,6 +99,11 @@ namespace through shared roots (`/Users`, `/Volumes`, `/mnt`, `/home`, `/tmp`) b
   It has no memory/CPU limits: rootless dockerd uses cgroups only through systemd, so `-m`/`--cpus` only
   print a warning. It doesn't start alongside `containerd.user`, because `dockerd-rootless` refuses to run
   next to `containerd-rootless.sh`; the boot log warns.
+- **Lima's k3s template works** (`base: template:k3s` on top of limakit's `lima.yaml`). Its provision script
+  runs get.k3s.io, which takes the OpenRC path through the shims. k3s runs in the `lima` container, with its
+  state on the data disk (`/var/lib/rancher`, `/var/lib/kubelet`, `/etc/rancher`). Services enabled with
+  `rc-update add` start again on every boot, and the shim respawns `supervise-daemon` services. The guest agent
+  forwards NodePort and LoadBalancer Services to the Mac (it finds `kubectl` and `/etc/rancher/k3s/k3s.yaml`).
 - **Provisioning scripts run in the `lima` container**, not on the LinuxKit host. Put persistent state under
   `/var/lib` or the shared roots.
 
@@ -112,6 +117,8 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
     port forwarding, mounts, memory/CPU limits)
   - rootless Docker (`LIMAKIT_DOCKER_ROOTLESS`): run, build, mounts, port forwarding, the socket on the host
   - Kubernetes in docker: k3s, k3d with flannel (default) or Cilium (BTF, tc BPF, VXLAN/GENEVE in the kernel)
+  - Lima's k3s template: node Ready, kubeconfig copied to the host, Service ports forwarded by the guest agent,
+    cluster kept across restarts
   - mounts: virtiofs and reverse-sshfs (ro/rw), all visible to `docker run -v`
   - port forwarding: TCP and UDP, plus the docker socket on the host; `limactl tunnel`
   - provisioning: `system`, `user`, `boot`, `dependency`, `data`, `ansible`, `param`, probes
@@ -130,14 +137,14 @@ Tested on an M4 Mac, macOS 27, Lima 2.2.1:
 - **Not supported:** `video.display` (a console window on the Mac): the kernel has no GPU or USB input.
 - **Left out on purpose:** `audio` (the guest gets no sound device access).
 - **Not supported:**
-  - Templates that need systemd (k8s, k0s, podman, faasd).
+  - Templates that need systemd (k8s, k0s, podman, faasd). k3s works (above).
   - stargz-snapshotter and bypass4netns for containerd.
   - Snapshots and TPM, which Lima's vz driver doesn't implement.
 
 ## Testing and CI
 
-`test/run.sh` boots a throwaway `limakit-test` instance three times (virtiofs + vzNAT; reverse-sshfs +
-user-v2 with `containerd.system` and `containerd.user`; rootless Docker) and checks every
+`test/run.sh` boots a throwaway `limakit-test` instance four times (virtiofs + vzNAT; reverse-sshfs +
+user-v2 with `containerd.system` and `containerd.user`; rootless Docker; Lima's k3s template) and checks every
 feature above. Checks the host can't run are skipped: no Rosetta, a chip without nested virtualization, or
 no `ansible-playbook`.
 

@@ -10,8 +10,8 @@ export LIMA_CIDATA_MNT=/mnt/lima-cidata
 
 # The container has a private /dev (the host's is 0660 root, which locks out the ssh user); copy in only
 # what is needed (device rules in limakit.yml): disks, fuse (sshfs), vsock (guest agent, ssh over vsock),
-# kvm (nestedVirtualization), net/tun (rootless engines).
-for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control; do
+# kvm (nestedVirtualization), net/tun (rootless engines), kmsg (k3s's kubelet).
+for d in /hostdev/vd* /hostdev/fuse /hostdev/vsock /hostdev/kvm /hostdev/btrfs-control /hostdev/kmsg; do
 	[ -e "$d" ] && [ ! -e "/dev/${d##*/}" ] && cp -a "$d" /dev/ || true
 done
 [ -e /hostdev/net/tun ] && mkdir -p /dev/net && cp -a /hostdev/net/tun /dev/net/ && chmod 666 /dev/net/tun # slirp4netns, as the user
@@ -219,6 +219,8 @@ for i in $(seq 0 $(($(yq '.bootcmd | length' "$UD") - 1))); do
 	yq -r ".bootcmd[$i]" "$UD" | sh || echo "WARNING: bootcmd[$i] failed"
 done
 "$LIMA_CIDATA_MNT/boot.sh" || true
+# services enabled with rc-update on an earlier boot (k3s; Lima's own are started by boot.sh again)
+for s in /etc/runlevels/default/*; do [ -e "$s" ] && { rc-service "${s##*/}" start || echo "WARNING: ${s##*/} failed to start"; }; done
 # after boot.sh, so Lima's boot scripts don't take their systemd paths (lima-init/shims/systemctl)
 [ "${LIMA_CIDATA_CONTAINERD_SYSTEM:-}" = 1 ] || [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ] &&
 	ln -sf /usr/libexec/limakit/systemctl /usr/bin/systemctl

@@ -110,13 +110,18 @@ services:
     net: host
     rootfsPropagation: shared
     runtime:
-      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-root", "/var/lib/lima-usr-local", "/var/lib/lima-containerd/containerd", "/var/lib/lima-containerd/buildkit", "/var/lib/lima-containerd/nerdctl", "/var/lib/lima-containerd/cni", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
+      mkdir: ["/run/dockersock", "/var/lib/lima-home", "/var/lib/lima-root", "/var/lib/lima-usr-local", "/var/lib/lima-containerd/containerd", "/var/lib/lima-containerd/buildkit", "/var/lib/lima-containerd/nerdctl", "/var/lib/lima-containerd/cni", "/var/lib/lima-k8s/rancher", "/var/lib/lima-k8s/kubelet", "/var/lib/lima-k8s/etc-rancher", "/var/lib/lima-openrc/init.d", "/var/lib/lima-openrc/conf.d", "/var/lib/lima-openrc/runlevels", "/var/lib/lima-ssh", "/var/lib/lima-rosettad", "/var/lima-share/Users", "/var/lima-share/Volumes", "/var/lima-share/mnt", "/var/lima-share/ca", "/var/lima-share/cdi", "/var/lima-share/host-services"]
     devices:
       - path: all
         type: b # cidata + data disk block devices
       - path: all
         type: c
         major: 10 # misc: fuse (229), kvm (232), net/tun (200), vsock (dynamic)
+      - path: /dev/kmsg # kubelet (k3s) opens it
+        type: c
+        major: 1
+        minor: 11
+        mode: "0600"
     mounts: # rw cgroup2: containerd.system/user containers (the default mount is read-only)
       - type: cgroup
         options: ["rw","nosuid","noexec","nodev","relatime"]
@@ -140,6 +145,14 @@ services:
       - /var/lib/lima-containerd/buildkit:/var/lib/buildkit
       - /var/lib/lima-containerd/nerdctl:/var/lib/nerdctl
       - /var/lib/lima-containerd/cni:/var/lib/cni
+      # k3s (Lima's k3s template): its containerd needs a real filesystem for overlayfs, not the image's overlay
+      - /var/lib/lima-k8s/rancher:/var/lib/rancher
+      - /var/lib/lima-k8s/kubelet:/var/lib/kubelet:rw,rbind,rshared
+      - /var/lib/lima-k8s/etc-rancher:/etc/rancher
+      # services installers set up the OpenRC way (k3s), started again on every boot (shims/rc-update)
+      - /var/lib/lima-openrc/init.d:/etc/init.d
+      - /var/lib/lima-openrc/conf.d:/etc/conf.d
+      - /var/lib/lima-openrc/runlevels:/etc/runlevels
       - /lib/modules:/lib/modules
       - /etc/resolv.conf:/etc/resolv.conf
       - /var/log:/var/log
