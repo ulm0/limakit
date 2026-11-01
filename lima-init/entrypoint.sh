@@ -166,7 +166,16 @@ if [ "${LIMA_CIDATA_CONTAINERD_SYSTEM:-}" = 1 ]; then
 	supervise /var/log/buildkitd.log buildkitd --addr=unix:///run/buildkit/buildkitd.sock \
 		--oci-worker=false --containerd-worker=true --containerd-worker-namespace=default
 fi
-if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
+# rootless dockerd: `env: {LIMAKIT_DOCKER_ROOTLESS: "true"}` in lima.yaml. Lima has no field for it (its
+# docker.yaml template sets it up with systemd --user) and rejects a `param:` no script uses; `env:` lands in
+# etc_environment. The rootful docker service keeps running: `sudo docker` reaches it.
+docker_rootless=
+if grep -qE '^LIMAKIT_DOCKER_ROOTLESS="?true"?$' "$LIMA_CIDATA_MNT/etc_environment"; then
+	if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
+		echo "WARNING: LIMAKIT_DOCKER_ROOTLESS is ignored with containerd.user: dockerd-rootless refuses to run next to containerd-rootless.sh"
+	else docker_rootless=1; fi
+fi
+if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ] || [ "$docker_rootless" = 1 ]; then
 	# rootless, as Lima's 20-rootless-base.sh sets it up: subuid ranges, unprivileged ports and ping
 	for f in /etc/subuid /etc/subgid; do
 		b=524288
@@ -177,6 +186,8 @@ if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
 	asuser() { setpriv --reuid="$LIMA_CIDATA_UID" --regid="$gid" --init-groups \
 		env -i HOME="$home" USER="$LIMA_CIDATA_USER" PATH=/usr/sbin:/usr/bin:/sbin:/bin XDG_RUNTIME_DIR="/run/user/$LIMA_CIDATA_UID" "$@"; }
 	rl=/run/user/$LIMA_CIDATA_UID
+fi
+if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
 	# memory/CPU limits: a cgroup delegated to the user (Lima gets one from systemd's Delegate=yes). The
 	# daemons run in its daemon/ leaf; containerd sees the whole cgroup as /sys/fs/cgroup (shims/rootless-containerd)
 	cg=/sys/fs/cgroup/containerd-user
@@ -195,6 +206,12 @@ if [ "${LIMA_CIDATA_CONTAINERD_USER:-}" = 1 ]; then
 		exec nsenter --no-fork --preserve-credentials -m -U -t \$(cat $rl/containerd-rootless/child_pid) -- \
 			buildkitd --addr=unix://$rl/buildkit-default/buildkitd.sock --root=$home/.local/share/buildkit-default \
 			--oci-worker=false --containerd-worker=true --containerd-worker-namespace=default"
+fi
+if [ "$docker_rootless" = 1 ]; then
+	# data in ~/.local/share/docker, socket $XDG_RUNTIME_DIR/docker.sock (forward it with portForwards guestSocket).
+	# No memory/CPU limits: rootless dockerd only uses cgroups through systemd (cgroup driver "none" without it)
+	supervise /var/log/docker-user.log asuser dockerd-rootless
+	echo "DOCKER_HOST=unix://$rl/docker.sock" >>"$home/.ssh/environment" # `docker` in ssh sessions; sudo drops it
 fi
 
 # cloud-init bootcmd (Lima's own snippets and `provision: mode: boot` scripts), then Lima's boot scripts

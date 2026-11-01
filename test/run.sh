@@ -2,7 +2,7 @@
 # Feature checks for the limakit image against a throwaway Lima instance (limakit-test) and its own disks.
 #   test/run.sh            # needs out/limakit-kernel + out/limakit-squashfs.img (make)
 #   KEEP=1 test/run.sh     # leave limakit-test (and its disks) up afterwards
-# Two boots: virtiofs + vzNAT + most features, then reverse-sshfs + user-v2. Checks the host can't run
+# Three boots: virtiofs + vzNAT + most features, reverse-sshfs + user-v2 + containerd, then rootless docker. Checks the host can't run
 # (no Rosetta, no nested virtualization, no ansible-playbook) are skipped, not failed.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -220,6 +220,22 @@ if start "$T/b.yaml"; then
 		check "containerd.$m: port forward" port_fwd $p tcp
 		check "containerd.$m: memory/cpu limits" g "[ \"\$($n run --rm -m 64m --cpus 0.5 alpine cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/cpu.max | tr '\n' ' ')\" = '67108864 50000 100000 ' ]"
 	done
+else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
+
+echo "== boot 3: rootless docker (LIMAKIT_DOCKER_ROOTLESS; can't run next to containerd.user)"
+config virtiofs 'env: {LIMAKIT_DOCKER_ROOTLESS: "true"}' |
+	awk '{print} /^portForwards:$/ {print "  - {guestSocket: \"/run/user/{{.UID}}/docker.sock\", hostSocket: \"{{.Dir}}/sock/docker-rootless.sock\"}"}' >"$T/c.yaml"
+if start "$T/c.yaml"; then
+	pass "boot (non-plain READY)"
+	printf 'FROM alpine\nRUN echo built >/b\n' >"$SHARE/Dockerfile"
+	check "docker rootless: docker is rootless, sudo docker rootful" g 'docker info --format "{{.SecurityOptions}}" | grep -q rootless && ! sudo docker info --format "{{.SecurityOptions}}" | grep -q rootless'
+	g 'docker run --rm -v /tmp/lima:/t alpine sh -c "echo rl > /t/from-rootless"'
+	check "docker rootless: container root writes as the user" g '[ "$(stat -c %u /tmp/lima/from-rootless)" = "$(id -u)" ]'
+	check "docker rootless: container write reaches host" grep -qx rl "$SHARE/from-rootless"
+	check "docker rootless: docker build" g "docker build -q -t limakit-b /tmp/lima && [ \"\$(docker run --rm limakit-b cat /b)\" = built ]"
+	g 'docker run -d --name web -p 18083:80 nginx:alpine' >/dev/null
+	check "docker rootless: port forward" port_fwd 18083 tcp
+	check "docker rootless: socket on host" sh -c "DOCKER_HOST='unix://$L/sock/docker-rootless.sock' docker info --format '{{.SecurityOptions}}' | grep -q rootless"
 else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
 
 echo
