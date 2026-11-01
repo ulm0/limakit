@@ -106,4 +106,10 @@ jobs:
           sq=$(sha256sum out/limakit-squashfs.img | cut -d' ' -f1) k=$(sha256sum out/limakit-kernel | cut -d' ' -f1)
           sed -e "s|https://github.com/[^ ]*/releases/latest/download/|$base/|" lima.yaml |
             awk -v sq="$sq" -v k="$k" '{print} /location: .*limakit-squashfs.img/ {print "    digest: sha256:" sq} /location: .*limakit-kernel$/ {print "      digest: sha256:" k}' >out/lima.yaml
-          gh release create "${{ github.ref_name }}" --generate-notes out/limakit-kernel out/limakit-squashfs.img out/SHA256SUMS out/lima.yaml
+          files="out/limakit-kernel out/limakit-squashfs.img out/SHA256SUMS out/lima.yaml"
+          # a release made by hand in the UI already exists: attach the assets to it instead of failing
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" --clobber $files
+          else
+            gh release create "${{ github.ref_name }}" --generate-notes $files
+          fi
