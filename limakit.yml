@@ -53,7 +53,7 @@ services:
   # propagate (rshared -> rslave) into dockerd's namespace at the same path, so `docker run -v` sees them.
   # Mounts outside these roots are invisible to docker (lima-init/entrypoint.sh warns about them).
   - name: docker
-    image: docker:29-dind
+    image: docker@sha256:3e5756e2b6dad6a5f1f5deacf0a19f9eaa2581b76ae092b2d4a118162e1d4d4e # docker:29-dind
     capabilities:
       - all
     net: host

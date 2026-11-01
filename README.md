@@ -60,7 +60,7 @@ containerd services:
 | Service | Role |
 |---|---|
 | `lima` (`lima-init/`) | Alpine container that does cloud-init's job: reads Lima's cidata ISO, creates the user and keys, writes `/etc/fstab`, sets timezone, CA certs and DNS, and runs `bootcmd`. It then starts sshd and runs Lima's own `boot.sh`. `shims/` are a minimal OpenRC stand-in, so Lima installs and starts `lima-guestagent` (and `rosettad`) the OpenRC way. |
-| `docker` | `docker:28-dind`, pinned by digest. Socket at `/run/dockersock/docker.sock`. |
+| `docker` | `docker:29-dind`, pinned by digest. Socket at `/run/dockersock/docker.sock`. |
 | `dhcpcd`, `acpid`, `ntpd`, `rngd`, `trim-after-delete` | LinuxKit packages. `acpid` gets a power-button action, so `limactl stop` shuts down cleanly. |
 
 Lima's mounts (virtiofs or reverse-sshfs) happen in the `lima` service. They propagate into dockerd's
