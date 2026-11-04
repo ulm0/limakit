@@ -4,7 +4,9 @@ LINUXKIT_VERSION := v1.8.2
 # images limakit.yml uses; local builds tag these names, otherwise linuxkit pulls them from GHCR (CI pushes them)
 REGISTRY := ghcr.io/ulm0/limakit
 KERNEL_VERSION ?= 6.18.57
-KERNEL_IMAGE := $(REGISTRY)/kernel:$(KERNEL_VERSION)
+# KERNEL_FLAVOR=aws: kernel/aws.config over limakit.config, published as kernel:<ver>-aws (EC2 Graviton, ulm0/yagan)
+KERNEL_FLAVOR ?=
+KERNEL_IMAGE := $(REGISTRY)/kernel:$(KERNEL_VERSION)$(if $(KERNEL_FLAVOR),-$(KERNEL_FLAVOR))
 LIMA_IMAGE := $(REGISTRY)/lima:latest
 all: out/limakit-squashfs.img
 
@@ -30,8 +32,8 @@ out/limakit-squashfs.img: limakit.yml lima-image | $(LK)
 KERNEL_CONTEXT ?= $(shell docker context show)
 .PHONY: kernel
 kernel: | $(LK)
-	DOCKER_HOST=$$(docker context inspect --format '{{.Endpoints.docker.Host}}' $(KERNEL_CONTEXT)) kernel/build.sh $(KERNEL_VERSION)
-	docker --context $(KERNEL_CONTEXT) tag linuxkit/kernel:$(KERNEL_VERSION)-limakit $(KERNEL_IMAGE)
+	DOCKER_HOST=$$(docker context inspect --format '{{.Endpoints.docker.Host}}' $(KERNEL_CONTEXT)) kernel/build.sh $(KERNEL_VERSION) $(KERNEL_FLAVOR)
+	docker --context $(KERNEL_CONTEXT) tag linuxkit/kernel:$(KERNEL_VERSION)-limakit$(if $(KERNEL_FLAVOR),-$(KERNEL_FLAVOR)) $(KERNEL_IMAGE)
 	[ "$(KERNEL_CONTEXT)" = "$$(docker context show)" ] || docker --context $(KERNEL_CONTEXT) save $(KERNEL_IMAGE) | docker load
 
 # Local testing with Lima. `run` recreates the instance from out/limakit-squashfs.img

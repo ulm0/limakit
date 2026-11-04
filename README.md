@@ -32,6 +32,9 @@ make kernel                              # on the current docker context
 make kernel KERNEL_CONTEXT=colima-kbuild # or on a bigger one; the image is copied back
 ```
 
+`KERNEL_FLAVOR=aws` builds the EC2 Graviton flavor (`kernel/aws.config` over `limakit.config`: EFI, ACPI, NVMe,
+ENA), published as `kernel:<ver>-aws` for [yagan](https://github.com/ulm0/yagan).
+
 Then build the image and start it:
 
 ```sh

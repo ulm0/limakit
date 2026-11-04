@@ -1,5 +1,6 @@
 # Builds everything natively on GitHub's arm64 runners and publishes to GHCR (ghcr.io/<owner>/limakit/*):
-#   kernel  kernel:<ver>-<hash> (rebuilt only when kernel/limakit.config or kernel/build.sh change) and kernel:<ver>
+#   kernel  kernel:<ver>-<hash> (rebuilt only when kernel/limakit.config or kernel/build.sh change) and kernel:<ver>;
+#           the aws flavor (kernel/aws.config, for ulm0/yagan) as kernel:<ver>-aws-<hash> and kernel:<ver>-aws
 #   lima    the lima-init service image: lima:<sha>, lima:latest (main), lima:<tag> — limakit.yml uses kernel:<ver> and lima:latest
 #   image   out/limakit-kernel + out/limakit-squashfs.img, as an artifact; attached to a release on v* tags
 # Booting can't be tested here (VZ needs nested virtualization); run test/run.sh on a Mac.
@@ -30,14 +31,16 @@ jobs:
       - run: shellcheck -S warning kernel/build.sh lima-init/entrypoint.sh lima-init/shims/* test/run.sh
 
   kernel:
+    strategy:
+      matrix:
+        flavor: ["", aws]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
-    outputs:
-      version: ${{ steps.key.outputs.version }}
-      image: ${{ steps.key.outputs.image }}
+    env:
+      FLAVOR: ${{ matrix.flavor }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -45,21 +48,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: key # the kernel version limakit.yml uses + a hash of what the build depends on
+      - id: key # the kernel version limakit.yml uses (+ flavor) + a hash of what the build depends on
         run: |
           version=$(sed -n 's|^  image: ghcr.io/ulm0/limakit/kernel:\(.*\)$|\1|p' limakit.yml)
-          hash=$(cat kernel/limakit.config kernel/build.sh | sha256sum | cut -c1-12)
+          hash=$(cat kernel/limakit.config ${FLAVOR:+kernel/$FLAVOR.config} kernel/build.sh | sha256sum | cut -c1-12)
           echo "version=$version" >>"$GITHUB_OUTPUT"
-          echo "image=$REGISTRY/kernel:$version-$hash" >>"$GITHUB_OUTPUT"
+          echo "tag=$version${FLAVOR:+-$FLAVOR}" >>"$GITHUB_OUTPUT"
+          echo "image=$REGISTRY/kernel:$version${FLAVOR:+-$FLAVOR}-$hash" >>"$GITHUB_OUTPUT"
       - id: cached
         run: docker manifest inspect "${{ steps.key.outputs.image }}" >/dev/null 2>&1 && echo hit=true >>"$GITHUB_OUTPUT" || true
       - if: steps.cached.outputs.hit != 'true'
         run: |
-          make kernel KERNEL_VERSION=${{ steps.key.outputs.version }}
-          docker tag "$REGISTRY/kernel:${{ steps.key.outputs.version }}" "${{ steps.key.outputs.image }}"
+          make kernel KERNEL_VERSION=${{ steps.key.outputs.version }} KERNEL_FLAVOR="$FLAVOR"
+          docker tag "$REGISTRY/kernel:${{ steps.key.outputs.tag }}" "${{ steps.key.outputs.image }}"
           docker push "${{ steps.key.outputs.image }}"
-      - if: github.ref == 'refs/heads/main' # move kernel:<ver> to this build
-        run: docker buildx imagetools create -t "$REGISTRY/kernel:${{ steps.key.outputs.version }}" "${{ steps.key.outputs.image }}"
+      - if: github.ref == 'refs/heads/main' # move kernel:<ver>[-flavor] to this build
+        run: docker buildx imagetools create -t "$REGISTRY/kernel:${{ steps.key.outputs.tag }}" "${{ steps.key.outputs.image }}"
 
   image:
     needs: [lint, kernel]
@@ -75,10 +79,12 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: this commit's kernel, under the name limakit.yml uses
+      - name: this commit's kernel, under the name limakit.yml uses # same key as the kernel job's
         run: |
-          docker pull "${{ needs.kernel.outputs.image }}"
-          docker tag "${{ needs.kernel.outputs.image }}" "$REGISTRY/kernel:${{ needs.kernel.outputs.version }}"
+          version=$(sed -n 's|^  image: ghcr.io/ulm0/limakit/kernel:\(.*\)$|\1|p' limakit.yml)
+          image=$REGISTRY/kernel:$version-$(cat kernel/limakit.config kernel/build.sh | sha256sum | cut -c1-12)
+          docker pull "$image"
+          docker tag "$image" "$REGISTRY/kernel:$version"
       - name: lima image
         run: |
           make lima-image
