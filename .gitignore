@@ -1,5 +1,4 @@
 bin/
 out/
 lima-image
-kernel/.build/
 .DS_Store
