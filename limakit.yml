@@ -1,7 +1,7 @@
 kernel:
   # github.com/ulm0/lk-kernel (one kernel for natkit, yagan and limakit), pinned by digest: a new build
   # there reaches limakit only through a (Renovate) PR here
-  image: ghcr.io/ulm0/lk-kernel:6.18.62@sha256:c36c1f0fcd86535245202d9ae798afbfe2d8832e3e6d14792f5c3071cb55afe5
+  image: ghcr.io/ulm0/lk-kernel:6.18.62@sha256:f5c3415f72aae8b7dc990a7136a20ce455e38088dc70ef17b6efc937d8f84fbd
   cmdline: "console=hvc0"
 init:
   - linuxkit/init:1c3e4933ceabd7418b961d66d5d884bf0044ac64
