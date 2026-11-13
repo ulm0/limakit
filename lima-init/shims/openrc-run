@@ -1,3 +1,5 @@
 #!/bin/sh
-# stub: Lima only tests for this file's existence (and sources init scripts that name it in the shebang)
+# Lima only tests for this file's existence. Init scripts that name it in their shebang and are run directly
+# (the k3s installer's `/etc/init.d/k3s restart`) get here as `openrc-run <script> <action>`: hand them to rc-service.
+[ $# -ge 2 ] && exec rc-service "${1##*/}" "$2"
 exit 0

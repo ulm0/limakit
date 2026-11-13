@@ -2,7 +2,8 @@
 # Feature checks for the limakit image against a throwaway Lima instance (limakit-test) and its own disks.
 #   test/run.sh            # needs out/limakit-kernel + out/limakit-squashfs.img (make)
 #   KEEP=1 test/run.sh     # leave limakit-test (and its disks) up afterwards
-# Three boots: virtiofs + vzNAT + most features, reverse-sshfs + user-v2 + containerd, then rootless docker. Checks the host can't run
+# Four boots: virtiofs + vzNAT + most features, reverse-sshfs + user-v2 + containerd, rootless docker, then Lima's
+# k3s template. Checks the host can't run
 # (no Rosetta, no nested virtualization, no ansible-playbook) are skipped, not failed.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -236,6 +237,23 @@ if start "$T/c.yaml"; then
 	g 'docker run -d --name web -p 18083:80 nginx:alpine' >/dev/null
 	check "docker rootless: port forward" port_fwd 18083 tcp
 	check "docker rootless: socket on host" sh -c "DOCKER_HOST='unix://$L/sock/docker-rootless.sock' docker info --format '{{.SecurityOptions}}' | grep -q rootless"
+else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
+
+echo "== boot 4: Lima's k3s template (OpenRC shims, guest agent Service forwarding)"
+# Lima's template on top of limakit's image: its provision installs k3s with get.k3s.io, which picks OpenRC
+sed -e "s|https://github.com/[^ ]*/download/|$ROOT/out/|" lima.yaml | awk '{print} /^base:$/ {print "  - template:k3s"}' >"$T/d.yaml"
+if start "$T/d.yaml"; then
+	pass "boot (non-plain READY, k3s probe)"
+	k3s() { limactl shell --workdir / "$I" sudo kubectl "$@" 2>/dev/null; }
+	# not `kubectl wait node --all`: it fails at once while the node hasn't registered yet
+	check "k3s: node Ready" sh -c "for _ in \$(seq 100); do limactl shell --workdir / $I sudo kubectl get nodes 2>/dev/null | grep -q ' Ready ' && exit 0; sleep 3; done; exit 1"
+	check "k3s: kubeconfig on host (copyToHost)" test -s "$L/copied-from-guest/kubeconfig.yaml"
+	k3s create deploy web --image=nginx:alpine >/dev/null && k3s expose deploy web --type=NodePort --port 80 --target-port 80 >/dev/null
+	k3s wait pod -l app=web --for=condition=Ready --timeout=300s >/dev/null
+	np=$(k3s get svc web -o 'jsonpath={.spec.ports[0].nodePort}')
+	check "k3s: NodePort forwarded by the guest agent" port_fwd "$np" tcp
+	limactl stop "$I" >/dev/null 2>&1; limactl start "$I" --tty=false >/dev/null 2>&1
+	check "k3s: back after reboot, state kept" sh -c "limactl shell --workdir / $I sudo kubectl wait deploy/web --for=condition=Available --timeout=300s"
 else fail "boot (see below)"; tail -n 20 "$T/start.log"; fi
 
 echo

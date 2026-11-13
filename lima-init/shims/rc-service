@@ -2,7 +2,8 @@
 # shellcheck disable=SC1090,SC2034,SC2154 # command, command_args, ... come from the sourced init script
 # Minimal OpenRC stand-in for the init scripts Lima's boot scripts write (lima-guestagent, rosettad, ...).
 # No runlevels or dependencies: just the fields those scripts use (command, command_args, command_user,
-# command_background, required_dirs/files, start_pre/start_post, output_log/error_log/log_file).
+# command_background, required_dirs/files, start_pre/start_post, output_log/error_log/log_file), plus
+# supervisor=supervise-daemon's respawn (respawn_delay; k3s).
 #   rc-service [--ifstarted|--ifstopped|--ifnotstarted|--ifexists] <service> <start|stop|restart|reload|status>
 IF=""
 for a; do
@@ -24,11 +25,11 @@ script=/etc/init.d/$svc
 [ -f "$script" ] || exit 0
 
 mkdir -p /run/rc-shim
-pidfile=/run/rc-shim/$svc.pid
-running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; }
-stop() {
-	running && kill "$(cat "$pidfile")"
-	rm -f "$pidfile"
+pf=/run/rc-shim/$svc.pid # not $pidfile: init scripts set that one, and they're sourced below
+running() { [ -f "$pf" ] && kill -0 "$(cat "$pf")" 2>/dev/null; }
+stop() { # each service runs in its own process group (setsid below): stop the respawn loop with it
+	running && { kill -- "-$(cat "$pf")" 2>/dev/null || kill "$(cat "$pf")"; }
+	rm -f "$pf"
 }
 start() (
 	set -a
@@ -43,8 +44,10 @@ start() (
 	err=${error_log:-${err_file:-$out}}
 	run="$command $command_args"
 	[ -n "${command_user:-}" ] && run="su -s /bin/sh ${command_user%%:*} -c '$run'"
-	eval "nohup $run >>\"$out\" 2>>\"$err\" &"
-	echo $! >"$pidfile"
+	run="$run >>\"$out\" 2>>\"$err\""
+	[ "${supervisor:-}" = supervise-daemon ] && run="while :; do $run; sleep ${respawn_delay:-1}; done"
+	setsid sh -c "$run" </dev/null >/dev/null 2>&1 &
+	echo $! >"$pf"
 	if command -v start_post >/dev/null; then start_post; fi
 )
 
@@ -53,6 +56,6 @@ started:restart) if running; then stop; start; fi ;; # not running: skipped, sti
 stopped:start | :start) running || start ;;
 :restart) stop; start ;;
 :stop) stop ;;
-:reload) running && kill -HUP "$(cat "$pidfile")" ;;
+:reload) running && kill -HUP "$(cat "$pf")" ;;
 :status) running ;;
 esac
