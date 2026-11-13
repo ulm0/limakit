@@ -23,14 +23,7 @@ Each instance keeps its data on its own disk, so you can run several (`--name wo
 
 To build it yourself:
 
-`make` builds the `lima` image and pulls the kernel from GHCR (once CI has published it), unless you've
-built the kernel locally.
-To build the kernel yourself (~25 min):
-
-```sh
-make kernel                              # on the current docker context
-make kernel KERNEL_CONTEXT=colima-kbuild # or on a bigger one; the image is copied back
-```
+`make` builds the `lima` image and pulls the kernel `limakit.yml` pins from GHCR.
 
 Then build the image and start it:
 
@@ -144,8 +137,6 @@ no `ansible-playbook`.
 `.github/workflows/build.yml` builds on GitHub's arm64 runners (`ubuntu-24.04-arm`) and publishes to
 `ghcr.io/<owner>/limakit/`:
 
-- `kernel:<version>` (what `limakit.yml` uses) and `kernel:<version>-<hash>`: rebuilt only when
-  `kernel/limakit.config` or `kernel/build.sh` change
 - `lima:latest` (what `limakit.yml` uses), `lima:<sha>` and `lima:<tag>`: the `lima-init` service image
 - the kernel and squashfs as a workflow artifact, attached to a GitHub Release on `v*` tags
 
@@ -153,23 +144,6 @@ Hosted runners can't boot the image (VZ needs nested virtualization), so `test/r
 
 ## Kernel
 
-`kernel/limakit.config` is the complete list of kernel options, each with the Lima or Docker feature that
-needs it. The kernel starts from `allnoconfig`, not LinuxKit's general-purpose config. `kernel/build.sh`
-does the following:
-
-1. Checks out LinuxKit's kernel packaging at a pinned commit.
-2. Runs `allnoconfig`, applies the options and normalizes the config with `olddefconfig` in LinuxKit's own
-   builder image.
-3. Fails if any option didn't take (`=n` options may also be absent, when their menu is off).
-4. Builds the kernel, tagged `ghcr.io/ulm0/limakit/kernel:<version>` (the name `limakit.yml` uses).
-
-The resulting full config is kept in `kernel/config-aarch64` for review.
-
-To move to another kernel, build it, then set `kernel.image` in `limakit.yml`:
-
-```sh
-make kernel KERNEL_VERSION=6.18.58
-```
-
-For a series LinuxKit doesn't package yet (e.g. 7.x), the script borrows LinuxKit's newest series
-packaging. New options get their defaults, so review `kernel/config-aarch64` afterwards.
+The kernel is [lk-kernel](https://github.com/ulm0/lk-kernel), shared with natkit and yagan: a complete option
+list over `allnoconfig` (`config/`), each option with the feature that needs it, built with
+LinuxKit's kernel packaging. `limakit.yml` pins it by version and digest; Renovate proposes new builds here.
